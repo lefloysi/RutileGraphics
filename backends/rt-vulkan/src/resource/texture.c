@@ -1018,7 +1018,7 @@ void rtvk_texture_view_bind_image(struct rtvk_context* ctx, struct rtvk_texture_
 
 	if (view->vk_image_view || view->image || view->texture) {
 		rtvk_texture_view_finish(view);
-		rtvk_init_resource_base(ctx, RTVK_RESOURCE_BASE(view), view, rtvk_texture_view_finalize_resource);
+		/* Recorded and submitted commands still own references to this view. */
 	}
 
 	view->vk_image_view = rtvk_image_view_create(ctx, image);
