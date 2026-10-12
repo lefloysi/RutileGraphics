@@ -13,7 +13,7 @@ u32 rt_atomic_inc(u32* value) {
 }
 
 u32 rt_atomic_dec(u32* value) {
-	return std::atomic_ref<u32>(*value).fetch_sub(1, std::memory_order_relaxed) - 1;
+	return std::atomic_ref<u32>(*value).fetch_sub(1, std::memory_order_acq_rel) - 1;
 }
 
 bool rt_atomic_bool_load(const bool* value) {

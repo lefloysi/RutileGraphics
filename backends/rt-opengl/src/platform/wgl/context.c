@@ -281,6 +281,13 @@ void rtgl_swap_glsurface_buffers(struct gl_surface* surface) {
 	SwapBuffers(surface->dc);
 }
 
+void rtgl_glsurface_extent(struct gl_surface* surface, u32* width, u32* height) {
+	RECT bounds = { 0 };
+	if (surface && surface->window) { GetClientRect(surface->window, &bounds); }
+	*width = (u32)(bounds.right - bounds.left);
+	*height = (u32)(bounds.bottom - bounds.top);
+}
+
 /*
 ** surface == NULL means headless: fall back to the bootstrap drawable
 ** owned by the context itself, never exposed to the caller.

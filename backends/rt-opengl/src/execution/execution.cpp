@@ -181,6 +181,7 @@ static unsigned rtgl_execution_thread(void* arg) {
 	}
 
 	glClipControl(GL_UPPER_LEFT, GL_ZERO_TO_ONE);
+	ctx->execution.loading_context = rtgl_create_glcontext(4, 6, false, ctx->execution.gl_context);
 	rtgl_printf("rt-opengl: loaded OpenGL 4.6 entry points\n");
 	rtgl_release_current_context();
 	rt_event_signal(ctx->execution.ready_event);
@@ -195,6 +196,8 @@ static unsigned rtgl_execution_thread(void* arg) {
 	}
 	rtgl_execution_run_commands(ctx);
 	rtgl_printf("rt-opengl: worker thread stopping\n");
+	rtgl_destroy_glcontext(ctx->execution.loading_context);
+	ctx->execution.loading_context = NULL;
 	rtgl_destroy_glcontext(ctx->execution.gl_context);
 	ctx->execution.gl_context = NULL;
 	return 0;
@@ -207,6 +210,7 @@ bool rtgl_execution_init(struct rtgl_context* ctx) {
 	ctx->execution.stop_event = rt_event_create(true, false);
 	ctx->execution.work_event = rt_event_create(true, false);
 	rtgl_mutex_init(&ctx->execution.work_lock);
+	rtgl_mutex_init(&ctx->execution.loading_lock);
 	ctx->execution.stopping = false;
 	if (!ctx->execution.ready_event || !ctx->execution.stop_event || !ctx->execution.work_event) {
 		rtgl_throwf(RT_PLATFORM_FAILURE, "failed to create OpenGL thread synchronization");
@@ -220,7 +224,7 @@ bool rtgl_execution_init(struct rtgl_context* ctx) {
 	}
 	ctx->execution.thread_id = rt_thread_id(ctx->execution.thread);
 	rt_event_wait(ctx->execution.ready_event);
-	if (!ctx->execution.gl_context) {
+	if (!ctx->execution.gl_context || !ctx->execution.loading_context) {
 		rtgl_throwf(RT_INITIALIZATION_FAILED, "failed to create OpenGL platform context");
 		return false;
 	}
@@ -253,6 +257,7 @@ void rtgl_execution_finish(struct rtgl_context* ctx) {
 		ctx->execution.work_event = NULL;
 	}
 	rtgl_mutex_finish(&ctx->execution.work_lock);
+	rtgl_mutex_finish(&ctx->execution.loading_lock);
 	ctx->execution.work_first = NULL;
 	ctx->execution.work_last = NULL;
 	ctx->execution.deferred_first = NULL;

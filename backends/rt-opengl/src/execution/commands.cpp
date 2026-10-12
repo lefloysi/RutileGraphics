@@ -12,6 +12,20 @@
 #include "transpiler/transpiler.h"
 
 #include <string.h>
+#include <vector>
+
+void rtgl_execution_buffer_initialize(struct rtgl_context* ctx, struct rtgl_buffer_storage* storage) {
+	std::vector<u08> initial;
+	if (storage->size) {
+		initial.assign(storage->shadow_data, storage->shadow_data + storage->size);
+	}
+	rtgl_buffer_storage_retain(storage);
+	if (!rtgl_execution_submit_async(ctx, [storage, initial = std::move(initial)](struct rtgl_context* exec_ctx) {
+			rtgl_execution_buffer_create(exec_ctx, storage);
+			rtgl_execution_buffer_data(exec_ctx, storage, storage->size, initial.data());
+			rtgl_buffer_storage_release(storage);
+		})) { rtgl_buffer_storage_release(storage); }
+}
 
 void rtgl_execution_buffer_create(struct rtgl_context* ctx, struct rtgl_buffer_storage* storage) {
 	rtgl_execution_submit_sync(ctx, [storage](struct rtgl_context*) {
@@ -409,7 +423,7 @@ void rtgl_execution_program_finalize(struct rtgl_context* ctx, struct rtgl_progr
 	rtgl_retain_resource(program);
 	bool finalized = false;
 	char message[1024] = { 0 };
-	rtgl_execution_submit_sync(ctx, [program, &finalized, &message](struct rtgl_context* exec_ctx) {
+	auto finalize = [program, &finalized, &message](struct rtgl_context* exec_ctx) {
 		finalized = rtgl_execution_program_finalize_spirv(exec_ctx, program);
 		if (finalized && program->gl_program) {
 			for (u32 address = 0; address < RTGL_LOCATION_ADDRESS_COUNT; address++) {
@@ -439,7 +453,17 @@ void rtgl_execution_program_finalize(struct rtgl_context* ctx, struct rtgl_progr
 			strncpy(message, rtgl_error_message(), sizeof(message) - 1);
 		}
 		rtgl_resource_release(RTGL_RESOURCE_BASE(program));
-	});
+	};
+	if (rtgl_execution_is_thread(ctx)) {
+		finalize(ctx);
+	} else {
+		rtgl_mutex_lock(&ctx->execution.loading_lock);
+		rtgl_make_glcontext_current(ctx->execution.loading_context, NULL);
+		finalize(ctx);
+		glFinish();
+		rtgl_release_current_context();
+		rtgl_mutex_unlock(&ctx->execution.loading_lock);
+	}
 	if (!finalized) rtgl_throwf(RT_SHADER_LINK_FAILED, "%s", message[0] ? message : "OpenGL program finalization failed");
 }
 void rtgl_execution_program_destroy(struct rtgl_context* ctx, struct rtgl_program* program) {
@@ -606,7 +630,7 @@ void rtgl_execution_texture_subdata(struct rtgl_context* ctx, struct rtgl_image_
 		if (!size) { return; }
 		GLuint staging = 0;
 		glCreateBuffers(1, &staging);
-		glNamedBufferStorage(staging, (GLsizeiptr)size, data, 0);
+		glNamedBufferStorage(staging, (GLsizeiptr)size, data, GL_CLIENT_STORAGE_BIT);
 		rtgl_execution_texture_upload(image, range, staging, 0);
 		glDeleteBuffers(1, &staging);
 	});
@@ -674,14 +698,16 @@ static void rtgl_execution_present_now(struct rtgl_context* ctx, struct rtgl_que
 	u32 height = view && view->image ? view->image->height : 0;
 
 	rtgl_make_glcontext_current(ctx->execution.gl_context, swapchain->surface);
+	u32 drawable_width, drawable_height;
+	rtgl_glsurface_extent(swapchain->surface, &drawable_width, &drawable_height);
 	glDisable(GL_SCISSOR_TEST);
 	glDisable(GL_FRAMEBUFFER_SRGB);
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer->gl_framebuffer);
 	glReadBuffer(GL_COLOR_ATTACHMENT0);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-	glViewport(0, 0, (GLsizei)width, (GLsizei)height);
+	glViewport(0, 0, (GLsizei)drawable_width, (GLsizei)drawable_height);
 	glDrawBuffer(GL_BACK);
-	glBlitFramebuffer(0, 0, (GLint)width, (GLint)height, 0, (GLint)height, (GLint)width, 0, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+	glBlitFramebuffer(0, 0, (GLint)width, (GLint)height, 0, (GLint)drawable_height, (GLint)width, (GLint)drawable_height - (GLint)height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 	rtgl_swap_glsurface_buffers(swapchain->surface);
 	rtgl_make_glcontext_current(ctx->execution.gl_context, NULL);
@@ -693,15 +719,20 @@ static void rtgl_execution_present_now(struct rtgl_context* ctx, struct rtgl_que
 	rtgl_resource_release(RTGL_RESOURCE_BASE(swapchain));
 }
 
-rt_timepoint rtgl_execution_present(struct rtgl_context* ctx, struct rtgl_queue* queue, struct rtgl_swapchain* swapchain, struct rtgl_framebuffer* framebuffer) {
+rt_timepoint rtgl_execution_present(struct rtgl_context* ctx, struct rtgl_queue* queue, struct rtgl_swapchain* swapchain, struct rtgl_framebuffer* framebuffer, rt_timepoint rendered) {
 	rt_timepoint done = rtgl_queue_signal(queue);
 
+	struct rtgl_image_base* image = framebuffer->color_views[0]->image;
+	rtgl_texture_image_retain(image);
 	rtgl_retain_resource(swapchain);
 	rtgl_retain_resource(framebuffer);
-	if (!rtgl_execution_submit_async(ctx, [queue, swapchain, framebuffer, value = rtgl_timepoint_queue_value(done)](struct rtgl_context* exec_ctx) {
+	if (!rtgl_execution_submit_async(ctx, [queue, swapchain, framebuffer, image, rendered, value = rtgl_timepoint_queue_value(done)](struct rtgl_context* exec_ctx) {
+			rtgl_timepoint_wait(exec_ctx, rendered);
 			rtgl_execution_present_now(exec_ctx, queue, swapchain, framebuffer, value);
+			rtgl_texture_image_release(exec_ctx, image);
 		})) {
 		rt_timepoint failed = { ((u64)queue->identifier << 56) | queue->submitted_value };
+		rtgl_texture_image_release(ctx, image);
 		rtgl_release_resource(framebuffer);
 		rtgl_release_resource(swapchain);
 		return failed;
@@ -715,4 +746,31 @@ void rtgl_execution_queue_complete(struct rtgl_context* ctx, struct rtgl_queue* 
 		rtgl_execution_queue_complete_locked(queue, value);
 		rtgl_execution_unlock(exec_ctx);
 	});
+}
+
+bool rtgl_execution_swapchain_prepare(struct rtgl_context* ctx, struct rtgl_swapchain* swapchain) {
+	const auto queue = rtgl_context_graphics_queue(ctx);
+	auto* resize = swapchain->resize;
+	resize->completion = rtgl_queue_signal(queue);
+	rtgl_retain_resource(swapchain);
+	return rtgl_execution_submit_async(ctx, [swapchain, resize, queue](struct rtgl_context* exec_ctx) {
+		rtgl_begin_errorable_operation();
+		struct rtgl_swapchain prepared = {};
+		rtgl_swapchain_create_images(exec_ctx, &prepared, resize->width, resize->height);
+		resize->frames = prepared.frames;
+		resize->image_count = prepared.image_count;
+		resize->error = rtgl_error();
+		rtgl_execution_lock(exec_ctx);
+		rtgl_execution_queue_complete_locked(queue, rtgl_timepoint_queue_value(resize->completion));
+		rtgl_execution_unlock(exec_ctx);
+		rtgl_resource_release(RTGL_RESOURCE_BASE(swapchain));
+	});
+}
+void rtgl_execution_frame_finalize(struct rtgl_context* ctx, struct rtgl_resource_base* base) {
+	auto finish = [base](struct rtgl_context*) { rtgl_resource_finalize(base); free(base); };
+	// Framebuffers belong to the render context, including destruction after a
+	// loading-context transfer releases the last reference to an old frame.
+	auto* command = new (std::nothrow) rtgl_async_command_t<decltype(finish)>(std::move(finish));
+	if (command) { rtgl_execution_submit_heap_command(ctx, command); }
+	else { rtgl_throwf(RT_OUT_OF_HOST_MEMORY, "failed to enqueue OpenGL frame destruction"); }
 }

@@ -183,8 +183,8 @@ void rtgl_queue_complete(struct rtgl_queue* queue, u64 value) {
 	rtgl_execution_unlock(ctx);
 }
 
-rt_timepoint rtgl_queue_present(struct rtgl_queue* queue, struct rtgl_swapchain* swapchain, struct rtgl_framebuffer* framebuffer) {
-	return rtgl_execution_present(queue->base.ctx, queue, swapchain, framebuffer);
+rt_timepoint rtgl_queue_present(struct rtgl_queue* queue, struct rtgl_swapchain* swapchain, struct rtgl_framebuffer* framebuffer, rt_timepoint rendered) {
+	return rtgl_execution_present(queue->base.ctx, queue, swapchain, framebuffer, rendered);
 }
 
 void rtgl_timepoint_wait(struct rtgl_context* ctx, rt_timepoint timepoint) {

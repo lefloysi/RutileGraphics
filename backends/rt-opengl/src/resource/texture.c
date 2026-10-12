@@ -519,12 +519,18 @@ static struct rtgl_image_base* rtgl_texture_image_create(struct rtgl_context* ct
 }
 
 void rtgl_texture_image_retain(struct rtgl_image_base* image) {
-	if (image && image->heap_owned) {
+	if (image && image->base.type == RTGL_RESOURCE_SWAPCHAIN_FRAME) {
+		rtgl_resource_retain(&image->base);
+	} else if (image && image->heap_owned) {
 		rt_atomic_inc(&image->ref_count);
 	}
 }
 
 void rtgl_texture_image_release(struct rtgl_context* ctx, struct rtgl_image_base* image) {
+	if (image && image->base.type == RTGL_RESOURCE_SWAPCHAIN_FRAME) {
+		rtgl_resource_release(&image->base);
+		return;
+	}
 	if (!image || !image->heap_owned || !rt_atomic_load(&image->ref_count) || rt_atomic_dec(&image->ref_count)) {
 		return;
 	}

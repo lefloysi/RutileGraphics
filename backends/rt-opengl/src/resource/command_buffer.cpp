@@ -473,7 +473,7 @@ void rtgl_command_buffer_buffer_data(struct rtgl_command_buffer* command_buffer,
 	struct rtgl_buffer_storage* previous = buffer->storage;
 	command->kind = RTGL_RECORDED_COMMAND_BUFFER_DATA;
 	command->data.buffer_data.range = range;
-	command->data.buffer_data.storage = rtgl_buffer_prepare_write(command_buffer->base.ctx, buffer);
+	command->data.buffer_data.storage = rtgl_buffer_prepare_recorded_write(command_buffer->base.ctx, buffer);
 	if (!command->data.buffer_data.storage) {
 		free(command->data.buffer_data.data);
 		command_buffer->command_count--;
@@ -1030,6 +1030,24 @@ void rtgl_command_buffer_mark_writes(struct rtgl_context* ctx, const rtgl_record
 			break;
 		}
 	}
+}
+
+static bool rtgl_transfer_commands(const rtgl_command_buffer_submission* submission) {
+	if (!submission->command_count) { return false; }
+	for (u32 index = 0; index < submission->command_count; ++index) {
+		switch (submission->commands[index].kind) {
+		case RTGL_RECORDED_COMMAND_BUFFER_DATA:
+		case RTGL_RECORDED_COMMAND_BUFFER_COPY:
+		case RTGL_RECORDED_COMMAND_BUFFER_COPY_TO_TEXTURE:
+		case RTGL_RECORDED_COMMAND_BUFFER_BARRIER:
+		case RTGL_RECORDED_COMMAND_TEXTURE_DATA:
+		case RTGL_RECORDED_COMMAND_TEXTURE_COPY:
+		case RTGL_RECORDED_COMMAND_TEXTURE_COPY_TO_BUFFER:
+		case RTGL_RECORDED_COMMAND_TEXTURE_BARRIER: break;
+		default: return false;
+		}
+	}
+	return true;
 }
 
 rt_timepoint rtgl_command_buffer_submit(struct rtgl_context* ctx, struct rtgl_queue* queue, struct rtgl_command_buffer* command_buffer) {
@@ -1661,7 +1679,9 @@ void rtgl_command_buffer_execute(struct rtgl_context* ctx, struct rtgl_command_b
 	for (rtgl_program_data_block& block : program_data_blocks) {
 		glDeleteBuffers(1, &block.buffer);
 	}
-	rtgl_execution_lock(ctx);
-	rtgl_execution_queue_complete_locked(queue, complete_value);
-	rtgl_execution_unlock(ctx);
+	if (complete_value) {
+		rtgl_execution_lock(ctx);
+		rtgl_execution_queue_complete_locked(queue, complete_value);
+		rtgl_execution_unlock(ctx);
+	}
 }

@@ -58,7 +58,7 @@ template <class F>
 bool rtgl_execution_submit_sync(struct rtgl_context* ctx, F&& fn) {
 	struct rt_event* done_event;
 
-	if (rtgl_execution_is_thread(ctx)) {
+	if (rtgl_execution_is_thread(ctx) || (ctx->execution.loading_context && rtgl_get_current_glcontext() == ctx->execution.loading_context)) {
 		fn(ctx);
 		return true;
 	}
@@ -84,7 +84,7 @@ template <class F>
 bool rtgl_execution_submit_async(struct rtgl_context* ctx, F&& fn) {
 	rtgl_async_command_t<F>* command;
 
-	if (rtgl_execution_is_thread(ctx)) {
+	if (rtgl_execution_is_thread(ctx) || (ctx->execution.loading_context && rtgl_get_current_glcontext() == ctx->execution.loading_context)) {
 		fn(ctx);
 		return true;
 	}

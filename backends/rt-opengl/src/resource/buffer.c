@@ -86,8 +86,7 @@ static struct rtgl_buffer_storage* rtgl_buffer_storage_create(struct rtgl_contex
 			return NULL;
 		}
 	}
-	rtgl_execution_buffer_create(ctx, storage);
-	rtgl_execution_buffer_data(ctx, storage, size, storage->shadow_data);
+	rtgl_execution_buffer_initialize(ctx, storage);
 	return storage;
 }
 
@@ -157,6 +156,19 @@ void rtgl_buffer_resize(struct rtgl_context* ctx, struct rtgl_buffer* buffer, en
 	if (!buffer->storage) {
 		buffer->storage = rtgl_buffer_storage_create(ctx, memory_type, size);
 	}
+}
+
+struct rtgl_buffer_storage* rtgl_buffer_prepare_recorded_write(struct rtgl_context* ctx, struct rtgl_buffer* buffer) {
+	if (!buffer || !buffer->storage) { return NULL; }
+	if (rt_atomic_load(&buffer->storage->ref_count) > 1) {
+		struct rtgl_buffer_storage* source = buffer->storage;
+		struct rtgl_buffer_storage* target = rtgl_buffer_take_reusable_storage(buffer, source->memory_type, source->size);
+		if (!target) { target = rtgl_buffer_storage_create(ctx, source->memory_type, source->size); }
+		if (!target) { return NULL; }
+		rtgl_buffer_recycle_storage(buffer, source);
+		buffer->storage = target;
+	}
+	return buffer->storage;
 }
 
 struct rtgl_buffer_storage* rtgl_buffer_prepare_write(struct rtgl_context* ctx, struct rtgl_buffer* buffer) {

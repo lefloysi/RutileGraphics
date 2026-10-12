@@ -3,6 +3,7 @@
 #include "buffer.h"
 #include "command_buffer.h"
 #include "error.h"
+#include "execution/execution.h"
 #include "framebuffer.h"
 #include "program.h"
 #include "queue.h"
@@ -40,6 +41,15 @@ void rtgl_finish_resource_base(struct rtgl_resource_base* base) {
 }
 
 void rtgl_resource_try_free(struct rtgl_resource_base* base) {
+	if (base->type == RTGL_RESOURCE_SWAPCHAIN_FRAME) {
+		struct rtgl_context* ctx = base->ctx;
+		rtgl_execution_lock(ctx);
+		const bool ready = rtgl_resource_ready_to_destroy(base);
+		if (ready) { rt_atomic_inc(&base->job_count); }
+		rtgl_execution_unlock(ctx);
+		if (ready) { rtgl_execution_frame_finalize(ctx, base); }
+		return;
+	}
 	if (rtgl_resource_ready_to_destroy(base)) {
 		rtgl_resource_finalize(base);
 		free(base);
@@ -60,8 +70,7 @@ void rtgl_resource_release(struct rtgl_resource_base* base) {
 	}
 	assert(base);
 	assert(rt_atomic_load(&base->ref_count) > 0);
-	rt_atomic_dec(&base->ref_count);
-	rtgl_resource_try_free(base);
+	if (rt_atomic_dec(&base->ref_count) == 0) { rtgl_resource_try_free(base); }
 }
 
 void rtgl_resource_retire(struct rtgl_resource_base* base) {

@@ -21,6 +21,8 @@ struct GLFWwindow;
 
 struct rtgl_execution_context {
 	struct gl_context* gl_context;
+	struct gl_context* loading_context;
+	struct rtgl_mutex loading_lock;
 	struct rt_thread* thread;
 	struct rt_event* ready_event;
 	struct rt_event* stop_event;
@@ -41,6 +43,7 @@ bool rtgl_execution_is_thread(struct rtgl_context* ctx);
 void rtgl_execution_lock(struct rtgl_context* ctx);
 void rtgl_execution_unlock(struct rtgl_context* ctx);
 
+void rtgl_execution_buffer_initialize(struct rtgl_context*, struct rtgl_buffer_storage*);
 void rtgl_execution_buffer_create(struct rtgl_context* ctx, struct rtgl_buffer_storage* storage);
 void rtgl_execution_buffer_delete(struct rtgl_context* ctx, struct rtgl_buffer_storage* storage);
 void rtgl_execution_buffer_data(struct rtgl_context* ctx, struct rtgl_buffer_storage* storage, usize size, const u08* bytes);
@@ -68,7 +71,11 @@ void rtgl_execution_texture_read(struct rtgl_context* ctx, struct rtgl_image_bas
 struct gl_surface* rtgl_execution_glfw_surface_create(struct rtgl_context* ctx, struct GLFWwindow* window);
 void rtgl_execution_surface_destroy(struct rtgl_context* ctx, struct gl_surface* surface);
 
-rt_timepoint rtgl_execution_present(struct rtgl_context* ctx, struct rtgl_queue* queue, struct rtgl_swapchain* swapchain, struct rtgl_framebuffer* framebuffer);
+struct rtgl_resource_base;
+bool rtgl_execution_swapchain_prepare(struct rtgl_context*, struct rtgl_swapchain*);
+void rtgl_execution_frame_finalize(struct rtgl_context*, struct rtgl_resource_base*);
+
+rt_timepoint rtgl_execution_present(struct rtgl_context* ctx, struct rtgl_queue* queue, struct rtgl_swapchain* swapchain, struct rtgl_framebuffer* framebuffer, rt_timepoint rendered);
 void rtgl_execution_queue_complete(struct rtgl_context* ctx, struct rtgl_queue* queue, u64 value);
 
 #ifdef __cplusplus

@@ -37,10 +37,8 @@ struct rtvk_swapchain {
 	bool frame_acquired;
 	bool resize_pending, resize_frame;
 	u32 requested_width, requested_height;
-	u64 builds_started, builds_published, presented_while_building;
 	void* pending_build;
 	struct rtvk_swapchain_generation* retired_generations;
-	u64 resize_started, resize_acquired, resize_presented, resize_rejected, resize_skipped, present_outdated;
 
 	struct rtvk_mutex frame_lock;
 	struct rtvk_condition frame_condition;

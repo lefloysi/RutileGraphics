@@ -106,6 +106,13 @@ void rtgl_swapchain_destroy_images(struct rtgl_context* ctx, struct rtgl_swapcha
 
 void rtgl_swapchain_finish(struct rtgl_swapchain* swapchain) {
 	rtgl_swapchain_destroy_images(swapchain->base.ctx, swapchain);
+	if (swapchain->resize) {
+		struct rtgl_swapchain prepared = { 0 };
+		prepared.frames = swapchain->resize->frames;
+		prepared.image_count = swapchain->resize->image_count;
+		rtgl_swapchain_destroy_images(swapchain->base.ctx, &prepared);
+		free(swapchain->resize);
+	}
 	if (swapchain->surface) {
 		rtgl_execution_surface_destroy(swapchain->base.ctx, swapchain->surface);
 		swapchain->surface = NULL;
@@ -151,34 +158,38 @@ void rtgl_swapchain_create_images(struct rtgl_context* ctx, struct rtgl_swapchai
 }
 
 void rtgl_swapchain_resize(struct rtgl_context* ctx, struct rtgl_swapchain* swapchain, u32 width, u32 height) {
-	for (u32 i = 0; i < swapchain->image_count; i++) {
-		struct rtgl_swapchain_frame* frame = swapchain->frames[i];
-		if (!frame) {
-			continue;
-		}
-		rtgl_execution_texture_delete(ctx, &frame->base);
-		frame->base.width = width;
-		frame->base.height = height;
-		rtgl_execution_texture_create(ctx, &frame->base);
-		rtgl_execution_texture_data(ctx, &frame->base, NULL);
-		if (rtgl_error() != RT_SUCCESS) {
-			return;
-		}
-		rtgl_texture_view_bind_image(ctx, frame->color_view, &frame->base);
-		rtgl_framebuffer_set_color_view(ctx, frame->framebuffer, 0, frame->color_view);
-		if (rtgl_error() != RT_SUCCESS) {
-			return;
-		}
+	if (!width || !height || swapchain->resize) { return; }
+	struct rtgl_swapchain_resize* resize = calloc(1, sizeof(*resize));
+	RTGL_CHECK_ALLOC(resize, sizeof(*resize), "OpenGL framebuffer preparation");
+	if (!resize) { return; }
+	resize->width = width;
+	resize->height = height;
+	swapchain->resize = resize;
+	if (!rtgl_execution_swapchain_prepare(ctx, swapchain)) {
+		swapchain->resize = NULL;
+		free(resize);
+		rtgl_resource_release(RTGL_RESOURCE_BASE(swapchain));
 	}
 }
 rt_swapchain_acquire_result rtgl_swapchain_acquire(struct rtgl_context* ctx, struct rtgl_swapchain* swapchain) {
+	struct rtgl_swapchain_resize* resize = swapchain->resize;
+	if (resize && rtgl_timepoint_reached(ctx, resize->completion)) {
+		if (resize->error != RT_SUCCESS || !resize->frames) {
+			rtgl_throwf(resize->error != RT_SUCCESS ? resize->error : RT_INITIALIZATION_FAILED, "OpenGL framebuffer preparation failed");
+			return (rt_swapchain_acquire_result){ 0 };
+		}
+		rtgl_swapchain_destroy_images(ctx, swapchain);
+		swapchain->frames = resize->frames;
+		swapchain->image_count = resize->image_count;
+		swapchain->resize = NULL;
+		free(resize);
+	}
 	struct rtgl_framebuffer* framebuffer = swapchain->frames[swapchain->current_frame_index]->framebuffer;
 	return (rt_swapchain_acquire_result){ rtgl_framebuffer_to_handle(framebuffer), { 0 } };
 }
 
 void rtgl_swapchain_present(struct rtgl_context* ctx, struct rtgl_swapchain* swapchain, rt_timepoint rendered) {
 	struct rtgl_queue* queue = rtgl_context_graphics_queue(ctx);
-	rtgl_timepoint_wait(ctx, rendered);
-	rtgl_queue_present(queue, swapchain, swapchain->frames[swapchain->current_frame_index]->framebuffer);
+	rtgl_queue_present(queue, swapchain, swapchain->frames[swapchain->current_frame_index]->framebuffer, rendered);
 	swapchain->current_frame_index = (swapchain->current_frame_index + 1) % swapchain->image_count;
 }

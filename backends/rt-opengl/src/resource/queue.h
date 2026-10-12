@@ -46,7 +46,7 @@ struct rtgl_queue* rtgl_queue_from_timepoint(struct rtgl_context* ctx, rt_timepo
 rt_timepoint rtgl_queue_signal(struct rtgl_queue* queue);
 u64 rtgl_timepoint_queue_value(rt_timepoint timepoint);
 void rtgl_queue_complete(struct rtgl_queue* queue, u64 value);
-rt_timepoint rtgl_queue_present(struct rtgl_queue* queue, struct rtgl_swapchain* swapchain, struct rtgl_framebuffer* framebuffer);
+rt_timepoint rtgl_queue_present(struct rtgl_queue* queue, struct rtgl_swapchain* swapchain, struct rtgl_framebuffer* framebuffer, rt_timepoint rendered);
 void rtgl_timepoint_wait(struct rtgl_context* ctx, rt_timepoint timepoint);
 bool rtgl_timepoint_reached(struct rtgl_context* ctx, rt_timepoint timepoint);
 

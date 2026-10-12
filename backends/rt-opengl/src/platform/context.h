@@ -37,6 +37,7 @@ struct gl_surface;
 
 void rtgl_destroy_glsurface(struct gl_surface* surface);
 void rtgl_swap_glsurface_buffers(struct gl_surface* surface);
+void rtgl_glsurface_extent(struct gl_surface* surface, u32* width, u32* height);
 
 /*
 ** Current context / surface binding (thread-local)

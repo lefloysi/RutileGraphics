@@ -32,12 +32,21 @@ struct rtgl_swapchain_frame {
 	struct rtgl_texture_view* color_view;
 };
 
+struct rtgl_swapchain_resize {
+	u32 width, height;
+	struct rtgl_swapchain_frame** frames;
+	u32 image_count;
+	rt_timepoint completion;
+	enum rt_error error;
+};
+
 struct rtgl_swapchain {
 	struct rtgl_resource_base base;
 	struct gl_surface* surface;
 	struct rtgl_swapchain_frame** frames;
 	u32 image_count;
 	u32 current_frame_index;
+	struct rtgl_swapchain_resize* resize;
 };
 RTGL_DECLARE_NEW_RESOURCE(swapchain)
 
