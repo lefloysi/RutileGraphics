@@ -1,10 +1,8 @@
 fn graphics_settings(var kiln::Target& target, kiln::Options& options) {
 	@target.option("standard", "c++latest");
 	@target.option("runtime", "MT");
-	@target.option("library_paths", "{root}/vcpkg_installed/windows/x64-windows-static/lib");
 	if (options.profile() == "debug") {
 		@target.option("runtime", "MTd");
-		@target.option("library_paths", "{root}/vcpkg_installed/windows/x64-windows-static/debug/lib");
 	};
 	if (options.profile() != "debug") {
 		@target.option("compile_options", "/DNDEBUG");
@@ -12,6 +10,12 @@ fn graphics_settings(var kiln::Target& target, kiln::Options& options) {
 };
 
 fn build(kiln::Options& options) {
+	var volk = kiln::add_package("volk");
+	@volk.option("headers", "volk.h");
+	@volk.option("libraries", "volk.lib");
+	var allocator = kiln::add_package("vma");
+	@allocator.option("headers", "vma/vk_mem_alloc.h");
+	@allocator.option("includes", "include/vma");
 	kiln::add_subdirectory("RTSL");
 	var antialias = kiln::add_target("rutile-antialias-program", kiln::TargetType::command);
 	@antialias.option("executable_target", "rtslc");
@@ -36,12 +40,14 @@ fn build(kiln::Options& options) {
 
 	var vulkan = kiln::add_target("rt-vulkan", kiln::TargetType::shared_lib);
 	graphics_settings(@vulkan, options);
-	@vulkan.option("includes", "backends/rt-vulkan/src;backends/rt-vulkan/src/system;RTSL/include;{root}/vcpkg_installed/windows/x64-windows-static/include;{root}/vcpkg_installed/windows/x64-windows-static/include/vma");
+	@vulkan.option("includes", "backends/rt-vulkan/src;backends/rt-vulkan/src/system;RTSL/include");
+	@vulkan.package("SPIRV-Tools");
+	@vulkan.package("volk");
+	@vulkan.package("vma");
 	@vulkan.option("defines", "VK_NO_PROTOTYPES;VMA_STATIC_VULKAN_FUNCTIONS=0;VMA_DYNAMIC_VULKAN_FUNCTIONS=1");
 	if (options.profile() == "debug") {
 		@vulkan.option("defines", "VK_NO_PROTOTYPES;VMA_STATIC_VULKAN_FUNCTIONS=0;VMA_DYNAMIC_VULKAN_FUNCTIONS=1;RTVK_ENABLE_VULKAN_VALIDATION");
 	};
-	@vulkan.option("libraries", "SPIRV-Tools.lib;volk.lib");
 	@vulkan.depends_on("rtsl");
 	@vulkan.sources.add("backends/rt-vulkan/src/context.c");
 	@vulkan.sources.add("backends/rt-vulkan/src/core.c");
@@ -64,8 +70,9 @@ fn build(kiln::Options& options) {
 
 	var opengl = kiln::add_target("rt-opengl", kiln::TargetType::shared_lib);
 	graphics_settings(@opengl, options);
-	@opengl.option("includes", "backends/rt-opengl/src;RTSL/include;{root}/vcpkg_installed/windows/x64-windows-static/include");
-	@opengl.option("libraries", "opengl32.lib;gdi32.lib;user32.lib;SPIRV-Tools.lib");
+	@opengl.option("includes", "backends/rt-opengl/src;RTSL/include");
+	@opengl.package("SPIRV-Tools");
+	@opengl.option("link_options", "opengl32.lib;gdi32.lib;user32.lib");
 	@opengl.depends_on("rtsl");
 	@opengl.sources.add("backends/rt-opengl/src/context.c");
 	@opengl.sources.add("backends/rt-opengl/src/core.c");
