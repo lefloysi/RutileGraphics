@@ -5,28 +5,28 @@ struct ControlPoint {
 };
 
 struct Vertex : Position {
-	fn Vertex(vec2 value) : Position(vec4(value, 0.0, 1.0)) {}
+	fn Vertex(var Vertex& this, vec2 value) : Position(vec4(value, 0.0, 1.0)) {};
 };
 
-@stage : tess_control
+[[stage : tess_control]]
 fn main<4>(patch<ControlPoint>& curve) -> ControlPoint {
 	curve.outer[0] = 1.0;
 	curve.outer[1] = 64.0;
 	return curve.current;
-}
+};
 
-@stage : tess_eval
+[[stage : tess_eval]]
 fn main(const isoline_patch<ControlPoint>& curve, tessellation<equal>) -> Vertex {
 	var f32 t = curve.coordinate;
 	var f32 u = 1.0 - t;
 	var vec2 position = curve[0].position * (u * u * u) + curve[1].position * (3.0 * u * u * t) +
 		curve[2].position * (3.0 * u * t * t) + curve[3].position * (t * t * t);
 	return Vertex(position);
-}
+};
 
-@stage : fragment
+[[stage : fragment]]
 fn main(Vertex vertex) -> vec4 {
 	return vec4(1.0, 0.8, 0.2, 1.0);
-}
+};
 
 

@@ -16,6 +16,7 @@
     "opengl": {
       "description": "Dependencies used by the OpenGL backend.",
       "dependencies": [
+        { "name": "egl-registry", "platform": "linux" },
         "glfw3"
       ]
     },
@@ -38,7 +39,10 @@
         "spirv-headers",
         "spirv-tools",
         "vulkan-headers",
-        "vulkan-loader",
+        {
+          "name": "vulkan-loader",
+          "platform": "!osx"
+        },
         "vulkan-memory-allocator",
         "volk"
       ]

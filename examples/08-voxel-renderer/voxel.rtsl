@@ -18,7 +18,7 @@ struct Vertex : Position {
 	f32 edge_mask;
 	f32 corner_mask;
 
-	fn Vertex(Point point) {
+	fn Vertex(var Vertex& this, Point point) {
 		position = vec4(point.position, 1.0);
 		position = mvp * position;
 		color = point.color;
@@ -27,12 +27,12 @@ struct Vertex : Position {
 		pixel_uv = point.pixel_uv;
 		edge_mask = point.edge_mask;
 		corner_mask = point.corner_mask;
-	}
+	};
 };
 
 fn mask_bit(f32 mask, f32 bit) -> bool {
 	return (mask / bit) % 2.0 >= 1.0;
-}
+};
 
 fn masked_edge_pixel(vec2 uv, f32 mask) -> bool {
 	return
@@ -40,7 +40,7 @@ fn masked_edge_pixel(vec2 uv, f32 mask) -> bool {
 		(uv.x >= 0.875 && mask_bit(mask, 2.0)) ||
 		(uv.y < 0.125 && mask_bit(mask, 4.0)) ||
 		(uv.y >= 0.875 && mask_bit(mask, 8.0));
-}
+};
 
 fn masked_corner_pixel(vec2 uv, f32 mask) -> bool {
 	return
@@ -48,32 +48,32 @@ fn masked_corner_pixel(vec2 uv, f32 mask) -> bool {
 		(uv.x >= 0.875 && uv.y < 0.125 && mask_bit(mask, 2.0)) ||
 		(uv.x >= 0.875 && uv.y >= 0.875 && mask_bit(mask, 4.0)) ||
 		(uv.x < 0.125 && uv.y >= 0.875 && mask_bit(mask, 8.0));
-}
+};
 
-@stage : vertex
+[[stage : vertex]]
 fn terrain(Point point) -> Vertex {
 	return Vertex(point);
-}
+};
 
-@stage : fragment
-fn terrain(Vertex vertex{.color : flat, .normal : flat, .ao : smooth, .pixel_uv : smooth, .edge_mask : flat, .corner_mask : flat}) -> vec4 {
+[[stage : fragment]]
+fn terrain([[flat(color, normal, edge_mask, corner_mask)]] [[smooth(ao, pixel_uv)]] Vertex vertex) -> vec4 {
 	var f32 sky_light = 0.82 + vertex.normal.y * 0.16;
 	var f32 side_light = vertex.normal.x * -0.05 + vertex.normal.z * -0.03;
 	var vec3 color = vertex.color * (sky_light + side_light) * vertex.ao;
 	var f32 shade = 1.0;
 	if (masked_edge_pixel(vertex.pixel_uv, vertex.edge_mask) || masked_corner_pixel(vertex.pixel_uv, vertex.corner_mask)) {
 		shade = 0.82;
-	}
+	};
 	return vec4(color * shade, 1.0);
-}
+};
 
-@stage : vertex
+[[stage : vertex]]
 fn water(Point point) -> Vertex {
 	return Vertex(point);
-}
+};
 
-@stage : fragment
-fn water(Vertex vertex{.color : smooth, .normal : smooth}) -> vec4 {
+[[stage : fragment]]
+fn water([[smooth(color, normal)]] Vertex vertex) -> vec4 {
 	var f32 light = 0.68 + vertex.normal.y * 0.22;
 	return vec4(vertex.color * light + vec3(0.04, 0.08, 0.12), 0.72);
-}
+};

@@ -2,6 +2,8 @@
 
 #include "error.h"
 
+#if defined(_WIN32)
+
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
@@ -64,3 +66,27 @@ void rtgl_glfw_get_framebuffer_size(GLFWwindow* window, int* width, int* height)
 	}
 	glfw_procs.glfwGetFramebufferSize(window, width, height);
 }
+#else
+#include "platform/proc.h"
+
+void (*rtgl_glfw_framebuffer_size)(GLFWwindow*, int*, int*);
+
+void rtgl_init_glfw_platform(void) {
+	rtgl_glfw_framebuffer_size = (void (*)(GLFWwindow*, int*, int*))rtgl_find_process_proc("glfwGetFramebufferSize");
+	if (!rtgl_glfw_framebuffer_size) {
+		rtgl_throwf(RT_UNSUPPORTED_PLATFORM, "glfwGetFramebufferSize not found in executable or loaded GLFW library");
+	}
+}
+
+bool rtInit_GLFW(void) {
+	rtgl_begin_errorable_operation();
+	rtgl_init_glfw_platform();
+	return rtgl_error() == RT_SUCCESS;
+}
+
+void rtgl_glfw_get_framebuffer_size(GLFWwindow* window, int* width, int* height) {
+	if (rtgl_glfw_framebuffer_size && window && width && height) {
+		rtgl_glfw_framebuffer_size(window, width, height);
+	}
+}
+#endif

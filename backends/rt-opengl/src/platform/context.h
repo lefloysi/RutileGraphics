@@ -43,8 +43,8 @@ void rtgl_glsurface_extent(struct gl_surface* surface, u32* width, u32* height);
 ** Current context / surface binding (thread-local)
 **
 ** surface == NULL means headless:
-**   EGL   - eglMakeCurrent with EGL_NO_SURFACE
-**   macOS - setView:nil
+**   EGL   - internal one-pixel pbuffer owned by gl_context
+**   macOS - headless CGL context (native OpenGL is limited to 4.1)
 **   WGL   - internal bootstrap drawable owned by gl_context, never
 **           exposed here
 */

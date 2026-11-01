@@ -488,7 +488,24 @@ static void rtvk_context_create_device(struct rtvk_context* ctx) {
 		if (ctx->swapchain_maintenance) { features13.pNext = &maintenance; }
 	}
 	if (rtvk_error() != RT_SUCCESS) { free(queue_families); free(queue_infos); free(priorities); return; }
-	const char* device_extensions[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME };
+	const char* device_extensions[3];
+	u32 device_extension_count = 0;
+	if (ctx->flags.presentation) {
+		device_extensions[device_extension_count++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+		if (ctx->swapchain_maintenance) {
+			device_extensions[device_extension_count++] = VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME;
+		}
+	}
+	/* Portability devices require this extension even for headless contexts. */
+	if (rtvk_device_extension_available(ctx->vk_physical_device, "VK_KHR_portability_subset")) {
+		device_extensions[device_extension_count++] = "VK_KHR_portability_subset";
+	}
+	if (rtvk_error() != RT_SUCCESS) {
+		free(queue_families);
+		free(queue_infos);
+		free(priorities);
+		return;
+	}
 	VkDeviceCreateInfo device_info = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
 	device_info.pNext = &features12;
 	device_info.flags = 0;
@@ -496,13 +513,8 @@ static void rtvk_context_create_device(struct rtvk_context* ctx) {
 	device_info.pQueueCreateInfos = queue_infos;
 	device_info.enabledLayerCount = 0;
 	device_info.ppEnabledLayerNames = NULL;
-	if (ctx->flags.presentation) {
-		device_info.enabledExtensionCount = ctx->swapchain_maintenance ? 2 : 1;
-		device_info.ppEnabledExtensionNames = device_extensions;
-	} else {
-		device_info.enabledExtensionCount = 0;
-		device_info.ppEnabledExtensionNames = NULL;
-	}
+	device_info.enabledExtensionCount = device_extension_count;
+	device_info.ppEnabledExtensionNames = device_extension_count ? device_extensions : NULL;
 	device_info.pEnabledFeatures = &features;
 
 	VkResult result = vkCreateDevice(ctx->vk_physical_device, &device_info, VK_ALLOCATOR, &ctx->vk_device);
@@ -587,11 +599,19 @@ struct rtvk_context* rtvk_create_context(rtvk_context_flags flags) {
 
 void rtvk_context_init(struct rtvk_context* ctx) {
 	u64 start_ns = rtvk_now_ns();
+#if defined(__APPLE__)
+	VkResult result = rtvk_initialize_moltenvk();
+	if (result != VK_SUCCESS) {
+		rtvk_throwf(RT_INCOMPATIBLE_DRIVER, "MoltenVK could not be loaded; deploy libMoltenVK.dylib beside the rt-vulkan backend (%s)", rtvk_vk_result_name(result));
+		return;
+	}
+#else
 	VkResult result = volkInitialize();
 	if (result != VK_SUCCESS) {
 		rtvk_throwf(RT_INCOMPATIBLE_DRIVER, "Vulkan loader is unavailable or could not be initialized (%s)", rtvk_vk_result_name(result));
 		return;
 	}
+#endif
 
 	u32 loader_version = volkGetInstanceVersion();
 	if (loader_version < RTVK_VULKAN_API_VERSION) {
@@ -624,6 +644,14 @@ void rtvk_context_init(struct rtvk_context* ctx) {
 	if (rtvk_error() != RT_SUCCESS) {
 		return;
 	}
+	bool portability_enumeration = rtvk_try_add_instance_extension(
+		VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME,
+		available_instance_extensions,
+		available_instance_extension_count,
+		instance_extensions,
+		&instance_extension_count,
+		(u32)(sizeof(instance_extensions) / sizeof(instance_extensions[0]))
+	);
 
 	if (ctx->flags.presentation) {
 		rtvk_add_presentation_instance_extensions(
@@ -685,7 +713,7 @@ void rtvk_context_init(struct rtvk_context* ctx) {
 #else
 	instance_info.pNext = NULL;
 #endif
-	instance_info.flags = 0;
+	instance_info.flags = portability_enumeration ? VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR : 0;
 	instance_info.pApplicationInfo = &app_info;
 #if defined(RTVK_ENABLE_VULKAN_VALIDATION)
 	instance_info.enabledLayerCount = validation_enabled ? (u32)(sizeof(rtvk_validation_layers) / sizeof(rtvk_validation_layers[0])) : 0;

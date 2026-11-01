@@ -1,7 +1,13 @@
 cmake_minimum_required(VERSION 3.28)
 project(rt-vulkan LANGUAGES C CXX)
 
-find_package(Vulkan REQUIRED)
+if(APPLE)
+	find_path(RTVK_VULKAN_INCLUDE_DIRECTORY "vulkan/vulkan.h"
+		HINTS "$ENV{VULKAN_SDK}/include" REQUIRED)
+	set(VOLK_PULL_IN_VULKAN OFF)
+else()
+	find_package(Vulkan REQUIRED)
+endif()
 find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 find_package(SPIRV-Tools CONFIG REQUIRED)
 find_package(Threads REQUIRED)
@@ -55,6 +61,22 @@ else()
     target_sources(rt-vulkan PRIVATE
 		"src/system/posix/sync.c"
     )
+endif()
+
+if(APPLE)
+	# MoltenVK supplies Vulkan over Metal; no native Vulkan loader is required.
+	find_file(RTVK_MOLTENVK_LIBRARY NAMES "libMoltenVK.dylib"
+		HINTS "$ENV{VULKAN_SDK}" "$ENV{VULKAN_SDK}/../MoltenVK"
+		PATH_SUFFIXES "lib" "dylib/macOS" REQUIRED)
+	target_sources(rt-vulkan PRIVATE "src/system/macos/loader.c")
+	target_include_directories(rt-vulkan PRIVATE "${RTVK_VULKAN_INCLUDE_DIRECTORY}")
+	target_link_libraries(rt-vulkan PRIVATE "-framework Metal" "-framework QuartzCore" "-framework Foundation")
+	set_property(TARGET rt-vulkan APPEND PROPERTY BUILD_RPATH "@loader_path" "@executable_path")
+	set_property(TARGET rt-vulkan APPEND PROPERTY INSTALL_RPATH "@loader_path" "@executable_path")
+	add_custom_command(TARGET rt-vulkan POST_BUILD
+		COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+			"${RTVK_MOLTENVK_LIBRARY}" "$<TARGET_FILE_DIR:rt-vulkan>/libMoltenVK.dylib"
+		VERBATIM)
 endif()
 
 target_compile_features(rt-vulkan PRIVATE c_std_11 cxx_std_23)

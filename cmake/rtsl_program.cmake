@@ -1,4 +1,7 @@
 function(rtsl_add_program name)
+	if(NOT TARGET rtslc)
+		message(FATAL_ERROR "Build rtslc with Kiln and set RTSLC_EXECUTABLE to its executable path")
+	endif()
 	cmake_parse_arguments(PROGRAM "" "" "SOURCES" ${ARGN})
 	if(NOT PROGRAM_SOURCES)
 		message(FATAL_ERROR "rtsl_add_program requires SOURCES")

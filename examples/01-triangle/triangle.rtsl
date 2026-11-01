@@ -5,26 +5,26 @@ struct Point {
 };
 
 struct Vertex : Position {
-	fn Vertex(Point point);
+	fn Vertex(var Vertex& this, Point point);
 
 
 
 	vec4 color;
 };
 
-fn Vertex::Vertex(Point point) : Position(vec4(point.position, 1.0)) {
+fn Vertex::Vertex(var Vertex& this, Point point) : Position(vec4(point.position, 1.0)) {
 	color = point.color;
-}
+};
 
-@stage : vertex
+[[stage : vertex]]
 fn main(Point point) -> Vertex {
 	return Vertex(point);
-}
+};
 // comment yay
-@stage : fragment
+[[stage : fragment]]
 fn main(Vertex vertex) -> vec4 {
 	var i32 a = 5;
 	return vertex.color;
-}
+};
 
 

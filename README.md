@@ -25,10 +25,17 @@ The source tree provides C and C++ binding headers. CMake exports them as the
   backends disabled and layers/tests enabled.
 - Linux GCC and Linux Clang: build and test portable compiler coverage with
   backends disabled and layers/tests enabled.
-- macOS: build and test setup is present with backends disabled. macOS backend
-  compilation is intentionally not enabled yet.
+- macOS: the Vulkan backend uses MoltenVK to translate Vulkan to Metal. The
+  integration requires verification on a Mac; it has not been runtime-tested here.
 
 ## Requirements
+
+The OpenGL backend is a build target on Windows, Linux, and macOS. Windows uses
+WGL; Linux uses EGL with X11 or Wayland and loads the system `libEGL.so.1` at
+runtime. Linux builds require the EGL registry headers (`egl-registry` in vcpkg).
+The renderer requires OpenGL 4.6, including SPIR-V shader specialization. macOS
+native OpenGL provides only 4.1, so its CGL adapter reports this unsupported
+version explicitly; compiling the target does not provide OpenGL 4.6 on macOS.
 
 Common requirements:
 
@@ -52,6 +59,23 @@ sudo apt-get install -y libgl1-mesa-dev libx11-dev libxcursor-dev libxi-dev libx
 ```
 
 macOS requirements:
+
+- Xcode and the macOS SDK.
+- MoltenVK with Vulkan 1.3 support, available from the macOS Vulkan SDK.
+- Target-built SPIRV-Tools, Vulkan headers, Volk, and Vulkan Memory Allocator.
+
+Set `VULKAN_SDK` to the macOS SDK directory, or provide its dependencies through
+Kiln's `dependency_prefix`. The MoltenVK prefix must contain
+`include/MoltenVK/mvk_vulkan.h` and `lib/libMoltenVK.dylib`. Kiln copies the
+dynamic library beside the graphics backend; CMake does the same. There is no
+dependency on a native Vulkan driver or the Vulkan loader on macOS.
+
+The backend loads the bundled MoltenVK provider, enables portability enumeration,
+and enables `VK_KHR_portability_subset` when advertised by the selected device.
+Applications using GLFW must pass that provider's `vkGetInstanceProcAddr` to
+`glfwInitVulkanLoader` before `glfwInit`, so window surfaces and rendering use the
+same provider. See the [MoltenVK integration guide](https://github.com/KhronosGroup/MoltenVK/blob/main/Docs/MoltenVK_Runtime_UserGuide.md)
+and [GLFW loader guidance](https://www.glfw.org/docs/3.4/vulkan_guide.html).
 
 ```sh
 brew install ninja

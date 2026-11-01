@@ -221,7 +221,7 @@ private:
 		if (opcode == 5 || opcode == 6) return debug;
 		if (opcode == 71 || opcode == 72) return annotations;
 		if (opcode == 12 || (opcode >= 54 && opcode <= 125) ||
-			(opcode >= 126 && opcode <= 190) || opcode == 218 || opcode == 219 || opcode == 224 || (opcode >= 245 && opcode <= 254))
+			(opcode >= 126 && opcode <= 190) || opcode == 218 || opcode == 219 || opcode == 224 || (opcode >= 245 && opcode <= 255))
 			return functions;
 		return types_constants;
 	}
@@ -993,7 +993,7 @@ private:
 	std::uint32_t valueFor(const std::unordered_map<std::uint32_t, std::uint32_t>& values, rtsl::ir::ValueId value) const {
 		const auto found = values.find(value.value());
 		if (found == values.end())
-			throw std::runtime_error("RTIR instruction references a value not available in this SPIR-V block");
+			throw std::runtime_error("RTIR instruction references unavailable value " + std::to_string(value.value()));
 		return found->second;
 	}
 
@@ -1413,6 +1413,7 @@ private:
 		std::unordered_map<std::uint32_t, rtsl::ir::TypeId> value_types;
 		std::unordered_map<std::uint32_t, std::uint32_t> constant_indices;
 		std::unordered_map<std::uint32_t, std::uint32_t> block_labels;
+		std::vector<std::pair<std::size_t, rtsl::ir::ValueId>> phi_values;
 		for (const rtsl::ir::Block& block : source.blocks) block_labels.emplace(block.id.value(), id());
 		for (const rtsl::ir::Parameter& parameter : source.parameters) {
 			const std::uint32_t parameter_id = id();
@@ -1433,7 +1434,8 @@ private:
 						if (successor.block != block.id) continue;
 						if (argument_index >= successor.arguments.size())
 							throw std::runtime_error("RTIR branch does not provide a block argument");
-						incoming.push_back(valueFor(values, successor.arguments[argument_index]));
+						phi_values.emplace_back(functions.size() + 1 + incoming.size(), successor.arguments[argument_index]);
+						incoming.push_back(0);
 						incoming.push_back(block_labels.at(predecessor.id.value()));
 					}
 				}
@@ -1479,10 +1481,14 @@ private:
 			case rtsl::ir::TerminatorKind::terminator_kill:
 				instruction(252, {});
 				break;
+			case rtsl::ir::TerminatorKind::terminator_unreachable:
+				instruction(255, {});
+				break;
 			default:
 				throw std::runtime_error("RTIR terminator is not supported by the SPIR-V translator");
 			}
 		}
+		for (const auto& [offset, value] : phi_values) functions.at(offset) = valueFor(values, value);
 		instruction(56, {});
 	}
 

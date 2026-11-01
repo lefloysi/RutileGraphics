@@ -27,12 +27,13 @@ target_include_directories(rutile PUBLIC "include")
 
 rtsl_add_program(rutile-antialias-program SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/shaders/antialias.rtsl")
 get_target_property(antialias_artifact rutile-antialias-program RTSL_PROGRAM_ARTIFACT)
-add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/rt_antialias_program.inc"
-    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${antialias_artifact}" "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/rt_antialias_program.inc"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_raw_program.cmake"
-    DEPENDS "${antialias_artifact}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_raw_program.cmake" VERBATIM)
-target_sources(rutile PRIVATE src/rt_antialias.c "${CMAKE_CURRENT_BINARY_DIR}/rt_antialias_program.inc")
-target_include_directories(rutile PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/rt_antialias_program.cpp"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${antialias_artifact}" "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/rt_antialias_program.cpp"
+        "-DSYMBOL=rt_antialias_program" "-DHEADER=rt_program_bytes" "-DTYPE=rt_program_bytes"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_program.cmake"
+    DEPENDS "${antialias_artifact}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_program.cmake" VERBATIM)
+target_sources(rutile PRIVATE src/rt_antialias.c "${CMAKE_CURRENT_BINARY_DIR}/rt_antialias_program.cpp")
+target_include_directories(rutile PRIVATE "src")
 
 add_library(rutile-cpp INTERFACE)
 add_library(Rutile::cpp ALIAS rutile-cpp)

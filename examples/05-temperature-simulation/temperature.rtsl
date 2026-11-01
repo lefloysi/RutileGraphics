@@ -7,51 +7,52 @@ struct Brush {
 	usize radius;
 	usize active;
 	f32 strength;
-}
+};
 
 uniform Brush brush;
 
 struct Point {
 	vec2 position;
 	vec2 uv;
-}
+};
 
 struct Vertex : Position {
 	vec2 uv;
 
-	fn Vertex(Point point) {
+	fn Vertex(var Vertex& this, Point point) {
 		position = vec4(point.position, 0.0, 1.0);
 		uv = point.uv;
-	}
-}
+	};
+};
 
 fn previous(usize value) -> usize {
 	if (value == 0) {
 		return 0;
-	}
+	};
 	return value - 1;
-}
+};
 
 fn next(usize value, usize limit) -> usize {
 	if (value + 1 >= limit) {
 		return limit - 1;
-	}
+	};
 	return value + 1;
-}
+};
 
 fn distance(usize left, usize right) -> usize {
 	if (left > right) {
 		return left - right;
-	}
+	};
 	return right - left;
-}
+};
 
-@stage : compute 
-fn temperature<16, 16, 1>(usize x, usize y, usize z) {
+[[stage : compute]]
+[[workgroup_size(16, 16, 1)]]
+fn temperature(usize x, usize y, usize z) {
 	var vec2<usize> size = temperature_out.size();
 	if (x >= size.x || y >= size.y) {
 		return;
-	}
+	};
 
 	var usize west = previous(x);
 	var usize east = next(x, size.x);
@@ -63,23 +64,23 @@ fn temperature<16, 16, 1>(usize x, usize y, usize z) {
 	var f32 heat = center + (((cardinal + diagonal * 0.25) * 0.2) - center) * 0.328125;
 	if (brush.active != 0 && distance(x, brush.x) <= brush.radius && distance(y, brush.y) <= brush.radius) {
 		heat = heat + brush.strength;
-	}
+	};
 	if (heat > 1.0) {
 		heat = 1.0;
-	}
+	};
 	if (heat < 0.0) {
 		heat = 0.0;
-	}
+	};
 	temperature_out[x, y] = heat;
-}
+};
 
-@stage : vertex
+[[stage : vertex]]
 fn display(Point point) -> Vertex {
 	return Vertex(point);
-}
+};
 
-@stage : fragment
+[[stage : fragment]]
 fn display(Vertex vertex) -> vec4 {
 	var f32 heat = temperature_out.sample(vertex.uv);
 	return vec4(heat, heat, heat, 1.0);
-}
+};

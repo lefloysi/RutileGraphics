@@ -10,6 +10,7 @@
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace rtd3d12::hlsl {
 namespace {
@@ -74,6 +75,8 @@ std::optional<StorageLayout> storageLayout(const rtsl::ir::Module& module, rtsl:
 	const rtsl::ir::Type* type = module.findType(type_id);
 	if (!type) return std::nullopt;
 	switch (type->kind) {
+	case rtsl::ir::TypeKind::type_void:
+		return StorageLayout{1, 0};
 	case rtsl::ir::TypeKind::type_boolean:
 	case rtsl::ir::TypeKind::type_signed_integer:
 	case rtsl::ir::TypeKind::type_unsigned_integer:
@@ -444,71 +447,154 @@ private:
 		if (function.blocks.empty() || !emitBlock(out, function.blocks.front(), blocks, value_types, 1)) return false;
 		out << "}\n"; return true;
 	}
-	bool emitBlock(std::ostringstream& out, const rtsl::ir::Block& block, const std::unordered_map<std::uint32_t, const rtsl::ir::Block*>& blocks, const std::unordered_map<std::uint32_t, rtsl::ir::TypeId>& value_types, int indent) {
+	using Blocks = std::unordered_map<std::uint32_t, const rtsl::ir::Block*>;
+	using ValueTypes = std::unordered_map<std::uint32_t, rtsl::ir::TypeId>;
+	struct LoopRegion {
+		const rtsl::ir::Block& header;
+		const rtsl::ir::Block& continuation;
+		const rtsl::ir::Block& merge;
+		const LoopRegion* parent;
+		std::string action;
+		bool in_continuation{};
+	};
+	bool hasFlowValue(rtsl::ir::TypeId id) const {
+		const auto* type = module.findType(id);
+		return entry_geometry_stream.empty() || !type || type->kind != rtsl::ir::TypeKind::type_primitive;
+	}
+	bool emitBlock(std::ostringstream& out, const rtsl::ir::Block& block, const Blocks& blocks, const ValueTypes& value_types, int indent) {
+		const std::string pad(static_cast<std::size_t>(indent) * 2, ' ');
+		// Block arguments are mutable phi destinations. Their storage must remain
+		// available across loop backedges and selections with different scopes.
+		std::vector<const rtsl::ir::Block*> ordered;
+		for (const auto& [id, candidate] : blocks) ordered.push_back(candidate);
+		std::ranges::sort(ordered, {}, [](const auto* candidate) { return candidate->id.value(); });
+		for (const auto* candidate : ordered) for (const auto& argument : candidate->arguments) {
+			if (!hasFlowValue(argument.type)) continue;
+			const std::string type = typeName(module, argument.type, error);
+			if (type.empty()) return false;
+			out << pad << type << " " << valueName(argument.value) << ";\n";
+		}
+		std::unordered_set<std::uint32_t> active;
+		return emitRegion(out, block, 0, nullptr, blocks, value_types, active, indent);
+	}
+	bool emitEdge(std::ostringstream& out, const rtsl::ir::Successor& successor, std::uint32_t stop,
+		const LoopRegion* loop, const Blocks& blocks, const ValueTypes& value_types,
+		std::unordered_set<std::uint32_t>& active, int indent) {
+		const auto found = blocks.find(successor.block.value());
+		if (found == blocks.end()) return fail("terminator", "branch references an unknown block");
+		const auto& target = *found->second;
+		if (successor.arguments.size() != target.arguments.size()) return fail("terminator", "branch arguments do not match the destination block");
+		const std::string pad(static_cast<std::size_t>(indent) * 2, ' ');
+		const std::string edge = "rtsl_edge_" + std::to_string(next_edge++);
+		// Read every source before writing any destination: a backedge may swap
+		// two carried values or pass a destination's previous value to another phi.
+		for (std::size_t i = 0; i < target.arguments.size(); ++i) {
+			if (!hasFlowValue(target.arguments[i].type)) continue;
+			const std::string type = typeName(module, target.arguments[i].type, error);
+			if (type.empty()) return false;
+			out << pad << type << " " << edge << "_" << i << " = " << valueName(successor.arguments[i]) << ";\n";
+		}
+		for (std::size_t i = 0; i < target.arguments.size(); ++i)
+			if (hasFlowValue(target.arguments[i].type)) out << pad << valueName(target.arguments[i].value) << " = " << edge << "_" << i << ";\n";
+		if (loop) {
+			if (target.id == loop->merge.id) {
+				if (!loop->in_continuation) out << pad << loop->action << " = 1;\n";
+				out << pad << "break;\n";
+				return true;
+			}
+			if (target.id == loop->header.id) {
+				if (loop->in_continuation) out << pad << "continue;\n";
+				else out << pad << loop->action << " = 2;\n" << pad << "break;\n";
+				return true;
+			}
+			if (target.id == loop->continuation.id) {
+				if (loop->in_continuation) return fail("terminator", "loop continuation branches to itself");
+				out << pad << "break;\n";
+				return true;
+			}
+			for (const auto* outer = loop->parent; outer; outer = outer->parent)
+				if (target.id == outer->header.id || target.id == outer->continuation.id || target.id == outer->merge.id)
+					return fail("terminator", "branch exits more than one structured loop");
+		}
+		if (target.id.value() == stop) return true;
+		return emitRegion(out, target, stop, loop, blocks, value_types, active, indent);
+	}
+	bool emitTerminator(std::ostringstream& out, const rtsl::ir::Block& block, std::uint32_t stop,
+		const LoopRegion* loop, const Blocks& blocks, const ValueTypes& value_types,
+		std::unordered_set<std::uint32_t>& active, int indent, bool loop_header = false) {
+		if (!block.terminator) return fail("terminator", "block has no terminator");
+		const auto& term = *block.terminator;
+		const std::string pad(static_cast<std::size_t>(indent) * 2, ' ');
+		if (term.kind == rtsl::ir::TerminatorKind::terminator_return ||
+			term.kind == rtsl::ir::TerminatorKind::terminator_return_value && term.operands.size() == 1) {
+			out << pad << "return";
+			if (suppress_returns) {
+				if (entry_geometry_stream.empty()) out << " " << entry_factor_name;
+			} else if (term.kind == rtsl::ir::TerminatorKind::terminator_return_value) out << " " << valueName(term.operands[0]);
+			out << ";\n";
+			return true;
+		}
+		if (term.kind == rtsl::ir::TerminatorKind::terminator_unreachable) return true;
+		if (term.kind == rtsl::ir::TerminatorKind::terminator_branch && term.successors.size() == 1)
+			return emitEdge(out, term.successors.front(), stop, loop, blocks, value_types, active, indent);
+		if (term.kind != rtsl::ir::TerminatorKind::terminator_conditional_branch || term.operands.size() != 1 || term.successors.size() != 2)
+			return fail("terminator", "RTIR terminator is not supported by the D3D12 HLSL translator");
+		const rtsl::ir::Block* merge = nullptr;
+		if (!loop_header) {
+			const auto found = blocks.find(block.merge.merge_block.value());
+			if (block.merge.kind != rtsl::ir::MergeKind::merge_selection || found == blocks.end()) return fail("terminator", "conditional branch requires a structured selection merge");
+			merge = found->second;
+		}
+		const auto arm_stop = merge ? merge->id.value() : stop;
+		out << pad << "if (" << valueName(term.operands[0]) << ") {\n";
+		if (!emitEdge(out, term.successors[0], arm_stop, loop, blocks, value_types, active, indent + 1)) return false;
+		out << pad << "} else {\n";
+		if (!emitEdge(out, term.successors[1], arm_stop, loop, blocks, value_types, active, indent + 1)) return false;
+		out << pad << "}\n";
+		if (!merge || merge->id.value() == stop || loop &&
+			(merge->id == loop->header.id || merge->id == loop->continuation.id || merge->id == loop->merge.id)) return true;
+		return emitRegion(out, *merge, stop, loop, blocks, value_types, active, indent);
+	}
+	bool emitLoop(std::ostringstream& out, const rtsl::ir::Block& header, std::uint32_t stop,
+		const LoopRegion* parent, const Blocks& blocks, const ValueTypes& value_types,
+		std::unordered_set<std::uint32_t>& active, int indent) {
+		const auto continuation = blocks.find(header.merge.continue_block.value());
+		const auto merge = blocks.find(header.merge.merge_block.value());
+		if (continuation == blocks.end() || merge == blocks.end() || merge->second->id == header.id || continuation->second->id == merge->second->id)
+			return fail("terminator", "loop references an invalid merge or continuation block");
+		LoopRegion loop{header, *continuation->second, *merge->second, parent, "rtsl_loop_action_" + std::to_string(header.id.value())};
+		const std::string pad(static_cast<std::size_t>(indent) * 2, ' ');
+		out << pad << "while (true) {\n";
+		for (const auto& instruction : header.instructions) if (!emitInstruction(out, instruction, value_types, pad + "  ")) return false;
+		// A one-pass body scope lets continue jump to the IR continuation (which
+		// may contain a for-loop increment), while break skips it completely.
+		out << pad << "  int " << loop.action << " = 0;\n" << pad << "  do {\n";
+		if (!emitTerminator(out, header, 0, &loop, blocks, value_types, active, indent + 2, true)) return false;
+		out << pad << "  } while (false);\n";
+		out << pad << "  if (" << loop.action << " == 1) break;\n";
+		out << pad << "  if (" << loop.action << " == 2) continue;\n";
+		if (loop.continuation.id != header.id) {
+			loop.in_continuation = true;
+			if (!emitRegion(out, loop.continuation, header.id.value(), &loop, blocks, value_types, active, indent + 1)) return false;
+		}
+		out << pad << "}\n";
+		if (loop.merge.id.value() == stop) return true;
+		return emitRegion(out, loop.merge, stop, parent, blocks, value_types, active, indent);
+	}
+	bool emitRegion(std::ostringstream& out, const rtsl::ir::Block& block, std::uint32_t stop,
+		const LoopRegion* loop, const Blocks& blocks, const ValueTypes& value_types,
+		std::unordered_set<std::uint32_t>& active, int indent) {
+		if (block.id.value() == stop) return true;
+		if (!active.insert(block.id.value()).second) return fail("terminator", "control-flow cycle has no structured loop header");
+		struct ActiveBlock {
+			std::unordered_set<std::uint32_t>& active;
+			std::uint32_t id;
+			~ActiveBlock() { active.erase(id); }
+		} guard{active, block.id.value()};
+		if (block.merge.kind == rtsl::ir::MergeKind::merge_loop) return emitLoop(out, block, stop, loop, blocks, value_types, active, indent);
 		const std::string pad(static_cast<std::size_t>(indent) * 2, ' ');
 		for (const auto& instruction : block.instructions) if (!emitInstruction(out, instruction, value_types, pad)) return false;
-		if (!block.terminator) return fail("function", "function has no terminator");
-		const auto& term = *block.terminator;
-		if (term.kind == rtsl::ir::TerminatorKind::terminator_return) { if (!suppress_returns) out << pad << "return;\n"; return true; }
-		if (term.kind == rtsl::ir::TerminatorKind::terminator_return_value && term.operands.size() == 1) { if (!suppress_returns) out << pad << "return " << valueName(term.operands[0]) << ";\n"; return true; }
-		if (term.kind != rtsl::ir::TerminatorKind::terminator_conditional_branch || term.operands.size() != 1 || term.successors.size() != 2 || block.merge.kind != rtsl::ir::MergeKind::merge_selection) return fail("terminator", "RTIR control flow is not supported by the D3D12 HLSL translator");
-		auto then_it = blocks.find(term.successors[0].block.value()), else_it = blocks.find(term.successors[1].block.value()), merge_it = blocks.find(block.merge.merge_block.value());
-		if (then_it == blocks.end() || else_it == blocks.end() || merge_it == blocks.end()) return fail("terminator", "selection references an unknown block");
-		const auto& merge = *merge_it->second;
-		const bool else_is_merge = else_it->second->id == merge.id;
-		if (else_is_merge && term.successors[1].arguments.size() != merge.arguments.size()) return fail("terminator", "selection merge arguments are malformed");
-		for (std::size_t index = 0; index < merge.arguments.size(); ++index) {
-			const std::string type = typeName(module, merge.arguments[index].type, error);
-			if (type.empty()) return false;
-			out << pad << type << " " << valueName(merge.arguments[index].value);
-			if (else_is_merge) out << " = " << valueName(term.successors[1].arguments[index]);
-			out << ";\n";
-		}
-		out << pad << "if (" << valueName(term.operands[0]) << ") {\n";
-		if (!emitSelectionArm(out, *then_it->second, merge, blocks, value_types, indent + 1)) return false;
-		if (else_is_merge) out << pad << "}\n";
-		else {
-			out << pad << "} else {\n";
-			if (!emitSelectionArm(out, *else_it->second, merge, blocks, value_types, indent + 1)) return false;
-			out << pad << "}\n";
-		}
-		return emitBlock(out, merge, blocks, value_types, indent);
-	}
-	bool emitSelectionArm(std::ostringstream& out, const rtsl::ir::Block& arm, const rtsl::ir::Block& merge, const std::unordered_map<std::uint32_t, const rtsl::ir::Block*>& blocks, const std::unordered_map<std::uint32_t, rtsl::ir::TypeId>& value_types, int indent) {
-		const std::string pad(static_cast<std::size_t>(indent) * 2, ' ');
-		for (const auto& instruction : arm.instructions) if (!emitInstruction(out, instruction, value_types, pad)) return false;
-		if (!arm.terminator) return fail("terminator", "selection arm has no terminator");
-		const auto& term = *arm.terminator;
-		if (term.kind == rtsl::ir::TerminatorKind::terminator_return) {
-			if (!suppress_returns) out << pad << "return;\n";
-			return true;
-		}
-		if (term.kind == rtsl::ir::TerminatorKind::terminator_return_value && term.operands.size() == 1) {
-			if (!suppress_returns) out << pad << "return " << valueName(term.operands[0]) << ";\n";
-			return true;
-		}
-		if (term.kind == rtsl::ir::TerminatorKind::terminator_branch && term.successors.size() == 1 && term.successors[0].block == merge.id) {
-			if (term.successors[0].arguments.size() != merge.arguments.size()) return fail("terminator", "selection merge arguments are malformed");
-			for (std::size_t index = 0; index < merge.arguments.size(); ++index) out << pad << valueName(merge.arguments[index].value) << " = " << valueName(term.successors[0].arguments[index]) << ";\n";
-			return true;
-		}
-		if (term.kind == rtsl::ir::TerminatorKind::terminator_conditional_branch && term.operands.size() == 1 && term.successors.size() == 2 && arm.merge.kind == rtsl::ir::MergeKind::merge_selection) {
-			auto then_it = blocks.find(term.successors[0].block.value()), else_it = blocks.find(term.successors[1].block.value()), inner_merge_it = blocks.find(arm.merge.merge_block.value());
-			if (then_it == blocks.end() || else_it == blocks.end() || inner_merge_it == blocks.end()) return fail("terminator", "nested selection references an unknown block");
-			const auto& inner_merge = *inner_merge_it->second;
-			for (const auto& argument : inner_merge.arguments) {
-				const std::string type = typeName(module, argument.type, error);
-				if (type.empty()) return false;
-				out << pad << type << " " << valueName(argument.value) << ";\n";
-			}
-			out << pad << "if (" << valueName(term.operands[0]) << ") {\n";
-			if (!emitSelectionArm(out, *then_it->second, inner_merge, blocks, value_types, indent + 1)) return false;
-			out << pad << "} else {\n";
-			if (!emitSelectionArm(out, *else_it->second, inner_merge, blocks, value_types, indent + 1)) return false;
-			out << pad << "}\n";
-			return emitSelectionArm(out, inner_merge, merge, blocks, value_types, indent);
-		}
-		return fail("terminator", "nested or non-structured selection arm is not supported by the D3D12 HLSL translator");
+		return emitTerminator(out, block, stop, loop, blocks, value_types, active, indent);
 	}
 	bool isEndPrimitiveCall(const rtsl::ir::Instruction& instruction) const {
 		if (entry_geometry_stream.empty() || instruction.opcode != rtsl::ir::Opcode::opcode_call || instruction.operands.size() != 2) return false;
@@ -754,8 +840,10 @@ private:
 			if (!resource_type || name.empty()) return fail("instruction", "resource load has an unknown resource type");
 			if (resource->kind == rtsl::ir::ResourceKind::resource_storage_buffer) {
 				if (resource_type->parameter_types.size() != 2 || ins.operands.size() > 1) return fail("instruction", "buffer resource load has an invalid RTIR shape");
+				auto header = storageLayout(module, resource_type->parameter_types[0]);
 				auto layout = storageLayout(module, ins.operands.empty() ? resource_type->parameter_types[0] : resource_type->parameter_types[1]);
-				const std::string offset = ins.operands.empty() ? "0" : std::to_string(storageLayout(module, resource_type->parameter_types[0])->size) + " + " + valueName(ins.operands[0]) + " * " + std::to_string(layout ? layout->size : 0);
+				if (!header || !layout) return fail("instruction", "buffer resource load type is unsupported");
+				const std::string offset = ins.operands.empty() ? "0" : std::to_string(header->size) + " + " + valueName(ins.operands[0]) + " * " + std::to_string(layout->size);
 				auto expression = byteAddressLoad(name, ins.type, offset);
 				if (!expression) return fail("instruction", "buffer resource load type is unsupported");
 				out << pad << type << " " << valueName(ins.result) << " = " << *expression << ";\n"; return true;
@@ -831,7 +919,15 @@ private:
 				out << pad << type << " " << valueName(ins.result) << " = " << valueName(ins.operands[0]) << ".xy;\n";
 				return true;
 			}
-			const auto* callee = module.findFunction(ins.callee); if (!callee) return fail("instruction", "call references unknown function"); out << pad << type << " " << valueName(ins.result) << " = " << symbolName(module, callee->symbol) << "("; for(std::size_t i=0;i<ins.operands.size();++i) { if(i) out << ", "; out << valueName(ins.operands[i]); } out << ");\n"; return true;
+			const auto* callee = module.findFunction(ins.callee);
+			if (!callee) return fail("instruction", "call references unknown function");
+			out << pad;
+			if (!instruction_type || instruction_type->kind != rtsl::ir::TypeKind::type_void)
+				out << type << " " << valueName(ins.result) << " = ";
+			out << symbolName(module, callee->symbol) << "(";
+			for (std::size_t i = 0; i < ins.operands.size(); ++i) { if (i) out << ", "; out << valueName(ins.operands[i]); }
+			out << ");\n";
+			return true;
 		}
 		default: return fail("instruction", "RTIR opcode is not supported by the D3D12 HLSL translator");
 		}
@@ -847,6 +943,7 @@ private:
 	std::uint32_t storage_block_size{};
 	std::unordered_set<std::uint32_t> geometry_end_markers;
 	std::unordered_map<std::uint32_t, std::string> outer_accesses;
+	std::uint32_t next_edge{};
 	bool suppress_outer_stores{};
 	bool suppress_returns{};
 };

@@ -5,6 +5,7 @@
 #include "resource/queue.h"
 
 #include <assert.h>
+#include <stdio.h>
 
 static thread_local rtgl_execution_command* rtgl_current_execution_command = NULL;
 
@@ -34,7 +35,9 @@ static bool rtgl_execution_create_context(struct rtgl_context* ctx) {
 	rtgl_printf("rt-opengl: initializing OpenGL 4.6\n");
 	ctx->execution.gl_context = rtgl_create_glcontext(4, 6, ctx->flags.presentation, NULL);
 	if (!ctx->execution.gl_context) {
-		rtgl_throwf(RT_INITIALIZATION_FAILED, "failed to create an OpenGL 4.6 core context");
+		if (rtgl_error() == RT_SUCCESS) {
+			rtgl_throwf(RT_INITIALIZATION_FAILED, "failed to create an OpenGL 4.6 core context");
+		}
 		return false;
 	}
 	return true;
@@ -146,13 +149,19 @@ static void rtgl_execution_run_commands(struct rtgl_context* ctx) {
 	} while (command);
 	rtgl_release_current_context();
 }
+static void rtgl_execution_signal_ready(struct rtgl_context* ctx) {
+	ctx->execution.initialization_error = rtgl_error();
+	snprintf(ctx->execution.initialization_message, sizeof(ctx->execution.initialization_message), "%s", rtgl_error_message());
+	rt_event_signal(ctx->execution.ready_event);
+}
+
 static unsigned rtgl_execution_thread(void* arg) {
 	struct rtgl_context* ctx = (struct rtgl_context*)arg;
 	struct rt_event* wait_events[2];
 
 	rtgl_printf("rt-opengl: worker thread starting\n");
 	if (!rtgl_execution_create_context(ctx)) {
-		rt_event_signal(ctx->execution.ready_event);
+		rtgl_execution_signal_ready(ctx);
 		return 0;
 	}
 
@@ -161,7 +170,7 @@ static unsigned rtgl_execution_thread(void* arg) {
 		rtgl_release_current_context();
 		rtgl_destroy_glcontext(ctx->execution.gl_context);
 		ctx->execution.gl_context = NULL;
-		rt_event_signal(ctx->execution.ready_event);
+		rtgl_execution_signal_ready(ctx);
 		return 0;
 	}
 	if (!GLAD_GL_VERSION_4_6) {
@@ -169,7 +178,7 @@ static unsigned rtgl_execution_thread(void* arg) {
 		rtgl_release_current_context();
 		rtgl_destroy_glcontext(ctx->execution.gl_context);
 		ctx->execution.gl_context = NULL;
-		rt_event_signal(ctx->execution.ready_event);
+		rtgl_execution_signal_ready(ctx);
 		return 0;
 	}
 	if (glDebugMessageCallback) {
@@ -184,7 +193,7 @@ static unsigned rtgl_execution_thread(void* arg) {
 	ctx->execution.loading_context = rtgl_create_glcontext(4, 6, false, ctx->execution.gl_context);
 	rtgl_printf("rt-opengl: loaded OpenGL 4.6 entry points\n");
 	rtgl_release_current_context();
-	rt_event_signal(ctx->execution.ready_event);
+	rtgl_execution_signal_ready(ctx);
 	wait_events[0] = ctx->execution.stop_event;
 	wait_events[1] = ctx->execution.work_event;
 	for (;;) {
@@ -225,7 +234,12 @@ bool rtgl_execution_init(struct rtgl_context* ctx) {
 	ctx->execution.thread_id = rt_thread_id(ctx->execution.thread);
 	rt_event_wait(ctx->execution.ready_event);
 	if (!ctx->execution.gl_context || !ctx->execution.loading_context) {
-		rtgl_throwf(RT_INITIALIZATION_FAILED, "failed to create OpenGL platform context");
+		if (ctx->execution.initialization_error != RT_SUCCESS) {
+			rtgl_throwf(ctx->execution.initialization_error, "%s", ctx->execution.initialization_message);
+		}
+		else {
+			rtgl_throwf(RT_INITIALIZATION_FAILED, "failed to create OpenGL platform context");
+		}
 		return false;
 	}
 	return true;

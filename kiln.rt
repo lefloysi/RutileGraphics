@@ -1,38 +1,48 @@
 fn graphics_settings(var kiln::Target& target, kiln::Options& options) {
 	@target.option("standard", "c++latest");
-	@target.option("runtime", "MT");
-	if (options.profile() == "debug") {
-		@target.option("runtime", "MTd");
-	};
-	if (options.profile() != "debug") {
-		@target.option("compile_options", "/DNDEBUG");
+	if (options.os() == "windows") {
+		@target.option("runtime", "MT");
+		if (options.profile() == "debug") {
+			@target.option("runtime", "MTd");
+		};
 	};
 };
 
 fn build(kiln::Options& options) {
+	var egl = kiln::add_package("egl-registry");
+	@egl.option("headers", "EGL/egl.h");
 	var volk = kiln::add_package("volk");
 	@volk.option("headers", "volk.h");
-	@volk.option("libraries", "volk.lib");
+	if (options.os() == "windows") {
+		@volk.option("libraries", "volk.lib");
+	}
+	else {
+		@volk.option("libraries", "libvolk.a");
+	};
+	if (options.os() == "macos") {
+		var moltenvk = kiln::add_package("MoltenVK");
+		@moltenvk.option("headers", "MoltenVK/mvk_vulkan.h");
+		@moltenvk.option("runtime_files", "lib/libMoltenVK.dylib");
+	};
 	var allocator = kiln::add_package("vma");
-	@allocator.option("headers", "vma/vk_mem_alloc.h");
-	@allocator.option("includes", "include/vma");
+	if (options.os() == "windows") {
+		@allocator.option("headers", "vma/vk_mem_alloc.h");
+		@allocator.option("includes", "include/vma");
+	}
+	else {
+		@allocator.option("headers", "vk_mem_alloc.h");
+	};
 	kiln::add_subdirectory("RTSL");
-	var antialias = kiln::add_target("rutile-antialias-program", kiln::TargetType::command);
-	@antialias.option("executable_target", "rtslc");
-	@antialias.option("arguments", "src/shaders/antialias.rtsl;--module;antialias;--emit-program;-o;{build}/generated/graphics/antialias.rtslp");
-	@antialias.option("working_directory", ".");
-	@antialias.option("inputs", "src/shaders/antialias.rtsl");
-	@antialias.option("outputs", "{build}/generated/graphics/antialias.rtslp");
-	var embed = kiln::add_target("rutile-antialias-embed", kiln::TargetType::command);
-	@embed.option("executable_target", "leaf-build-tools");
-	@embed.depends_on("rutile-antialias-program");
-	@embed.option("arguments", "embed-bytes;{build}/generated/graphics/antialias.rtslp;{build}/generated/graphics/rt_antialias_program.inc;rt_antialias_program");
-	@embed.option("inputs", "{build}/generated/graphics/antialias.rtslp");
-	@embed.option("outputs", "{build}/generated/graphics/rt_antialias_program.inc");
 	var api = kiln::add_target("rutile", kiln::TargetType::static_lib);
 	graphics_settings(@api, options);
-	@api.option("includes", "include;{build}/generated/graphics");
-	@api.depends_on("rutile-antialias-embed");
+	@api.option("includes", "include;src");
+	@api.depends_on("rtslc");
+ @api.sources.add("src/shaders/antialias.rtsl");
+ @api.option("rtsl_compiler", "{artifact:rtslc}");
+ @api.option("rtsl_module", "antialias");
+ @api.option("rtsl_symbol", "rt_antialias_program");
+ @api.option("rtsl_header", "rt_program_bytes.hpp");
+ @api.option("rtsl_type", "rt_program_bytes");
 	@api.sources.add("src/rutile.c");
 	@api.sources.add("src/rt_ext_swapchain.c");
 	@api.sources.add("src/rt_ext_glfw.c");
@@ -44,11 +54,16 @@ fn build(kiln::Options& options) {
 	@vulkan.package("SPIRV-Tools");
 	@vulkan.package("volk");
 	@vulkan.package("vma");
+	if (options.os() == "macos") {
+		@vulkan.package("MoltenVK");
+		@vulkan.sources.add("backends/rt-vulkan/src/system/macos/loader.c");
+		@vulkan.option("link_options", "-Wl,-rpath,@loader_path;-Wl,-rpath,@executable_path;-Wl,-framework,Metal;-Wl,-framework,QuartzCore;-Wl,-framework,Foundation");
+	};
 	@vulkan.option("defines", "VK_NO_PROTOTYPES;VMA_STATIC_VULKAN_FUNCTIONS=0;VMA_DYNAMIC_VULKAN_FUNCTIONS=1");
 	if (options.profile() == "debug") {
 		@vulkan.option("defines", "VK_NO_PROTOTYPES;VMA_STATIC_VULKAN_FUNCTIONS=0;VMA_DYNAMIC_VULKAN_FUNCTIONS=1;RTVK_ENABLE_VULKAN_VALIDATION");
 	};
-	@vulkan.depends_on("rtsl");
+	@vulkan.depends_on("rtsl-runtime");
 	@vulkan.sources.add("backends/rt-vulkan/src/context.c");
 	@vulkan.sources.add("backends/rt-vulkan/src/core.c");
 	@vulkan.sources.add("backends/rt-vulkan/src/error.c");
@@ -64,7 +79,15 @@ fn build(kiln::Options& options) {
 	@vulkan.sources.add("backends/rt-vulkan/src/resource/swapchain_build.cpp");
 	@vulkan.sources.add("backends/rt-vulkan/src/resource/texture.c");
 	@vulkan.sources.add("backends/rt-vulkan/src/system/atomic.cpp");
-	@vulkan.sources.add("backends/rt-vulkan/src/system/windows/sync.c");
+	if (options.os() == "windows") {
+		@vulkan.sources.add("backends/rt-vulkan/src/system/windows/sync.c");
+	}
+	else {
+		@vulkan.sources.add("backends/rt-vulkan/src/system/posix/sync.c");
+		if (options.os() == "linux") {
+			@vulkan.option("link_options", "-ldl;-pthread");
+		};
+	};
 	@vulkan.sources.add("backends/rt-vulkan/src/transpiler/transpiler.cpp");
 	@vulkan.sources.add("backends/rt-vulkan/src/vma.cpp");
 
@@ -72,8 +95,10 @@ fn build(kiln::Options& options) {
 	graphics_settings(@opengl, options);
 	@opengl.option("includes", "backends/rt-opengl/src;RTSL/include");
 	@opengl.package("SPIRV-Tools");
-	@opengl.option("link_options", "opengl32.lib;gdi32.lib;user32.lib");
-	@opengl.depends_on("rtsl");
+	if (options.os() == "windows") {
+		@opengl.option("link_options", "opengl32.lib;gdi32.lib;user32.lib");
+	};
+	@opengl.depends_on("rtsl-runtime");
 	@opengl.sources.add("backends/rt-opengl/src/context.c");
 	@opengl.sources.add("backends/rt-opengl/src/core.c");
 	@opengl.sources.add("backends/rt-opengl/src/error.c");
@@ -81,7 +106,6 @@ fn build(kiln::Options& options) {
 	@opengl.sources.add("backends/rt-opengl/src/execution/execution.cpp");
 	@opengl.sources.add("backends/rt-opengl/src/glad/gl.c");
 	@opengl.sources.add("backends/rt-opengl/src/glfw.c");
-	@opengl.sources.add("backends/rt-opengl/src/platform/wgl/context.c");
 	@opengl.sources.add("backends/rt-opengl/src/resource/buffer.c");
 	@opengl.sources.add("backends/rt-opengl/src/resource/command_buffer.cpp");
 	@opengl.sources.add("backends/rt-opengl/src/resource/framebuffer.c");
@@ -91,54 +115,73 @@ fn build(kiln::Options& options) {
 	@opengl.sources.add("backends/rt-opengl/src/resource/sampler.c");
 	@opengl.sources.add("backends/rt-opengl/src/resource/swapchain.c");
 	@opengl.sources.add("backends/rt-opengl/src/resource/texture.c");
-	@opengl.sources.add("backends/rt-opengl/src/system/windows/atomic.cpp");
-	@opengl.sources.add("backends/rt-opengl/src/system/windows/sync.cpp");
+	if (options.os() == "windows") {
+		@opengl.sources.add("backends/rt-opengl/src/platform/wgl/context.c");
+		@opengl.sources.add("backends/rt-opengl/src/system/windows/atomic.cpp");
+		@opengl.sources.add("backends/rt-opengl/src/system/windows/sync.cpp");
+	}
+	else {
+		@opengl.sources.add("backends/rt-opengl/src/platform/posix/proc.c");
+		@opengl.sources.add("backends/rt-opengl/src/system/posix/atomic.cpp");
+		@opengl.sources.add("backends/rt-opengl/src/system/posix/sync.cpp");
+		if (options.os() == "macos") {
+			@opengl.sources.add("backends/rt-opengl/src/platform/cgl/context.c");
+			@opengl.option("link_options", "-pthread;-Wl,-framework,OpenGL");
+		}
+		else {
+			@opengl.sources.add("backends/rt-opengl/src/platform/egl/context.c");
+			@opengl.package("egl-registry");
+			@opengl.option("link_options", "-ldl;-pthread");
+		};
+	};
 	@opengl.sources.add("backends/rt-opengl/src/transpiler/transpiler.cpp");
 
-	var software = kiln::add_target("rt-software", kiln::TargetType::shared_lib);
-	graphics_settings(@software, options);
-	@software.option("includes", "backends/rt-software/src;backends/rt-software/src/execution;backends/rt-software/src/interpreter;backends/rt-software/src/resource");
-	@software.sources.add("backends/rt-software/src/context.c");
-	@software.sources.add("backends/rt-software/src/core.c");
-	@software.sources.add("backends/rt-software/src/error.c");
-	@software.sources.add("backends/rt-software/src/execution/execution.c");
-	@software.sources.add("backends/rt-software/src/interpreter/artifact.c");
-	@software.sources.add("backends/rt-software/src/interpreter/execute.c");
-	@software.sources.add("backends/rt-software/src/resource/buffer.c");
-	@software.sources.add("backends/rt-software/src/resource/command_buffer.c");
-	@software.sources.add("backends/rt-software/src/resource/framebuffer.c");
-	@software.sources.add("backends/rt-software/src/resource/resource.c");
-	@software.sources.add("backends/rt-software/src/resource/sampler.c");
-	@software.sources.add("backends/rt-software/src/resource/queue.c");
-	@software.sources.add("backends/rt-software/src/resource/program.c");
-	@software.sources.add("backends/rt-software/src/resource/texture.c");
-	@software.sources.add("backends/rt-software/src/presentation/windows/glfw.c");
-	@software.sources.add("backends/rt-software/src/presentation/windows/swapchain.c");
-
-	var d3d12 = kiln::add_target("rt-d3d12", kiln::TargetType::shared_lib);
-	graphics_settings(@d3d12, options);
-	@d3d12.option("includes", "backends/rt-d3d12/src;RTSL/include");
-	@d3d12.option("libraries", "d3d12.lib;dxgi.lib;dxguid.lib;dxcompiler.lib");
-	if (options.profile() == "debug") {
-		@d3d12.option("defines", "RTD3D12_ENABLE_D3D12_VALIDATION");
+	if (options.os() == "windows") {
+		var software = kiln::add_target("rt-software", kiln::TargetType::shared_lib);
+		graphics_settings(@software, options);
+		@software.option("includes", "backends/rt-software/src;backends/rt-software/src/execution;backends/rt-software/src/interpreter;backends/rt-software/src/resource");
+		@software.sources.add("backends/rt-software/src/context.c");
+		@software.sources.add("backends/rt-software/src/core.c");
+		@software.sources.add("backends/rt-software/src/error.c");
+		@software.sources.add("backends/rt-software/src/execution/execution.c");
+		@software.sources.add("backends/rt-software/src/interpreter/artifact.c");
+		@software.sources.add("backends/rt-software/src/interpreter/execute.c");
+		@software.sources.add("backends/rt-software/src/resource/buffer.c");
+		@software.sources.add("backends/rt-software/src/resource/command_buffer.c");
+		@software.sources.add("backends/rt-software/src/resource/framebuffer.c");
+		@software.sources.add("backends/rt-software/src/resource/resource.c");
+		@software.sources.add("backends/rt-software/src/resource/sampler.c");
+		@software.sources.add("backends/rt-software/src/resource/queue.c");
+		@software.sources.add("backends/rt-software/src/resource/program.c");
+		@software.sources.add("backends/rt-software/src/resource/texture.c");
+		@software.sources.add("backends/rt-software/src/presentation/windows/glfw.c");
+		@software.sources.add("backends/rt-software/src/presentation/windows/swapchain.c");
+	
+		var d3d12 = kiln::add_target("rt-d3d12", kiln::TargetType::shared_lib);
+		graphics_settings(@d3d12, options);
+		@d3d12.option("includes", "backends/rt-d3d12/src;RTSL/include");
+		@d3d12.option("libraries", "d3d12.lib;dxgi.lib;dxguid.lib;dxcompiler.lib");
+		if (options.profile() == "debug") {
+			@d3d12.option("defines", "RTD3D12_ENABLE_D3D12_VALIDATION");
+		};
+		@d3d12.depends_on("rtsl-runtime");
+		@d3d12.sources.add("backends/rt-d3d12/src/context.cpp");
+		@d3d12.sources.add("backends/rt-d3d12/src/core.cpp");
+		@d3d12.sources.add("backends/rt-d3d12/src/error.cpp");
+		@d3d12.sources.add("backends/rt-d3d12/src/glfw.cpp");
+		@d3d12.sources.add("backends/rt-d3d12/src/init.cpp");
+		@d3d12.sources.add("backends/rt-d3d12/src/resource/buffer.cpp");
+		@d3d12.sources.add("backends/rt-d3d12/src/resource/command_buffer.cpp");
+		@d3d12.sources.add("backends/rt-d3d12/src/resource/framebuffer.cpp");
+		@d3d12.sources.add("backends/rt-d3d12/src/resource/program.cpp");
+		@d3d12.sources.add("backends/rt-d3d12/src/resource/queue.cpp");
+		@d3d12.sources.add("backends/rt-d3d12/src/resource/resource.cpp");
+		@d3d12.sources.add("backends/rt-d3d12/src/resource/sampler.cpp");
+		@d3d12.sources.add("backends/rt-d3d12/src/resource/swapchain.cpp");
+		@d3d12.sources.add("backends/rt-d3d12/src/resource/texture.cpp");
+		@d3d12.sources.add("backends/rt-d3d12/src/sync.cpp");
+		@d3d12.sources.add("backends/rt-d3d12/src/transpiler/hlsl.cpp");
 	};
-	@d3d12.depends_on("rtsl");
-	@d3d12.sources.add("backends/rt-d3d12/src/context.cpp");
-	@d3d12.sources.add("backends/rt-d3d12/src/core.cpp");
-	@d3d12.sources.add("backends/rt-d3d12/src/error.cpp");
-	@d3d12.sources.add("backends/rt-d3d12/src/glfw.cpp");
-	@d3d12.sources.add("backends/rt-d3d12/src/init.cpp");
-	@d3d12.sources.add("backends/rt-d3d12/src/resource/buffer.cpp");
-	@d3d12.sources.add("backends/rt-d3d12/src/resource/command_buffer.cpp");
-	@d3d12.sources.add("backends/rt-d3d12/src/resource/framebuffer.cpp");
-	@d3d12.sources.add("backends/rt-d3d12/src/resource/program.cpp");
-	@d3d12.sources.add("backends/rt-d3d12/src/resource/queue.cpp");
-	@d3d12.sources.add("backends/rt-d3d12/src/resource/resource.cpp");
-	@d3d12.sources.add("backends/rt-d3d12/src/resource/sampler.cpp");
-	@d3d12.sources.add("backends/rt-d3d12/src/resource/swapchain.cpp");
-	@d3d12.sources.add("backends/rt-d3d12/src/resource/texture.cpp");
-	@d3d12.sources.add("backends/rt-d3d12/src/sync.cpp");
-	@d3d12.sources.add("backends/rt-d3d12/src/transpiler/hlsl.cpp");
 
 	var logging = kiln::add_target("rt-logging-layer", kiln::TargetType::shared_lib);
 	graphics_settings(@logging, options);

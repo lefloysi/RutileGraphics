@@ -20,25 +20,25 @@ struct Vertex : Position {
 	f32 kind;
 	f32 seed;
 
-	fn Vertex(Point point) {
+	fn Vertex(var Vertex& this, Point point) {
 		position = scene.view_projection * vec4(point.position, 1.0);
 		color = point.color;
 		normal = point.normal;
 		kind = point.kind;
 		seed = point.seed;
-	}
+	};
 };
 
-@stage : vertex
+[[stage : vertex]]
 fn main(Point point) -> Vertex {
 	return Vertex(point);
-}
+};
 
-@stage : fragment
-fn main(Vertex vertex{.color : smooth, .normal : smooth, .kind : flat, .seed : flat}) -> vec4 {
+[[stage : fragment]]
+fn main([[smooth(color, normal)]] [[flat(kind, seed)]] Vertex vertex) -> vec4 {
 	var f32 diffuse = 0.5 + 0.5 * (vertex.normal.x * scene.light_direction.x + vertex.normal.y * scene.light_direction.y + vertex.normal.z * scene.light_direction.z);
 	var f32 star_light = 1.05 + diffuse * 0.55;
 	var f32 planet_light = 0.12 + diffuse * 0.92;
 	var f32 light = star_light * (1.0 - vertex.kind) + planet_light * vertex.kind;
 	return vec4(vertex.color.xyz * light, vertex.color.w);
-}
+};

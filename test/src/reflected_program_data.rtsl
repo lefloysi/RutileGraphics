@@ -1,7 +1,7 @@
 struct UiDraw {
 	vec4 first;
 	vec4 second;
-}
+};
 
 uniform UiDraw ui_draw;
 uniform f32 opacity;
@@ -10,49 +10,50 @@ struct UiLayout {
 	vec2 viewport_size;
 	vec2 translation;
 	f32 texture_mode;
-}
+};
 uniform UiLayout ui_layout;
 
-@stage : compute
-fn main<1, 1, 1>(usize x, usize y, usize z) {
+[[stage : compute]]
+[[workgroup_size(1, 1, 1)]]
+fn main(usize x, usize y, usize z) {
 	var vec4 value = ui_draw.first + ui_draw.second;
-}
+};
 
 struct Point {
 	vec2 position;
 	vec2 uv;
-}
+};
 
 struct Vertex : Position {
 	vec2 uv;
 
-	fn Vertex(Point point) {
+	fn Vertex(var Vertex& this, Point point) {
 		position = vec4(point.position.x, point.position.y, 0.0, 1.0);
 		uv = point.uv;
-	}
-}
+	};
+};
 
-@stage : vertex
+[[stage : vertex]]
 fn draw(Point point) -> Vertex {
 	return Vertex(point);
-}
+};
 
 struct ConditionalOpacity {
 	f32 value;
 
-	fn ConditionalOpacity(f32 source) {
+	fn ConditionalOpacity(var ConditionalOpacity& this, f32 source) {
 		value = 0.0;
-		if (source >= 0.0) { value = source; }
-	}
-}
+		if (source >= 0.0) { value = source; };
+	};
+};
 
 fn visible_opacity(f32 value) -> f32 {
-	if (value < 0.0) { return 0.0; }
+	if (value < 0.0) { return 0.0; };
 	return value;
-}
+};
 
-@stage : fragment
-fn draw(Vertex vertex{.uv : smooth}) -> vec4 {
+[[stage : fragment]]
+fn draw([[smooth(uv)]] Vertex vertex) -> vec4 {
 	var f32 negative_fraction = -2.75;
 	var i32 signed_value = i32(negative_fraction);
 	var f32 signed_round_trip = f32(signed_value);
@@ -68,4 +69,4 @@ fn draw(Vertex vertex{.uv : smooth}) -> vec4 {
 		ui_draw.first.z * ui_draw.second.z,
 		ui_draw.first.w * ui_draw.second.w * visible_opacity(conditional_opacity.value) * ui_layout.texture_mode
 	);
-}
+};

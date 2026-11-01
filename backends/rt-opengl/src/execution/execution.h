@@ -33,6 +33,8 @@ struct rtgl_execution_context {
 	struct rtgl_execution_command* deferred_first;
 	struct rtgl_execution_command* deferred_last;
 	unsigned thread_id;
+	enum rt_error initialization_error;
+	char initialization_message[1024];
 	bool stopping;
 };
 

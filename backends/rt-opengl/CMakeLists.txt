@@ -1,10 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 project(rt-opengl LANGUAGES C CXX)
 
-if(NOT WIN32)
-    message(FATAL_ERROR "rt-opengl currently requires Windows")
-endif()
-
 find_package(Threads REQUIRED)
 find_package(SPIRV-Tools CONFIG REQUIRED)
 
@@ -29,7 +25,6 @@ target_sources(rt-opengl PRIVATE
     "src/KHR/khrplatform.h"
     "src/platform/context.h"
     "src/platform/proc.h"
-    "src/platform/wgl/context.c"
     "src/resource/buffer.c"
     "src/resource/buffer.h"
     "src/resource/command_buffer.cpp"
@@ -57,6 +52,7 @@ target_sources(rt-opengl PRIVATE
 
 if(WIN32)
     target_sources(rt-opengl PRIVATE
+        "src/platform/wgl/context.c"
         "src/system/windows/atomic.cpp"
         "src/system/windows/sync.cpp"
     )
@@ -64,19 +60,31 @@ else()
     target_sources(rt-opengl PRIVATE
         "src/system/posix/atomic.cpp"
         "src/system/posix/sync.cpp"
+        "src/platform/posix/proc.c"
     )
+    if(APPLE)
+        target_sources(rt-opengl PRIVATE "src/platform/cgl/context.c")
+        find_library(RT_OPENGL_FRAMEWORK "OpenGL" REQUIRED)
+        target_link_libraries(rt-opengl PRIVATE "${RT_OPENGL_FRAMEWORK}")
+    else()
+        target_sources(rt-opengl PRIVATE "src/platform/egl/context.c")
+        find_path(RT_EGL_INCLUDE_DIRECTORY "EGL/egl.h" REQUIRED)
+        target_include_directories(rt-opengl PRIVATE "${RT_EGL_INCLUDE_DIRECTORY}")
+        target_link_libraries(rt-opengl PRIVATE "${CMAKE_DL_LIBS}")
+    endif()
 endif()
 
 target_compile_features(rt-opengl PRIVATE c_std_11 cxx_std_23)
 target_include_directories(rt-opengl PRIVATE "src")
 target_link_libraries(rt-opengl PRIVATE
-    opengl32
-    gdi32
-    user32
     Threads::Threads
     RTSL::rtsl
     SPIRV-Tools-static
 )
+
+if(WIN32)
+    target_link_libraries(rt-opengl PRIVATE opengl32 gdi32 user32)
+endif()
 
 set_target_properties(rt-opengl PROPERTIES
     CXX_EXTENSIONS OFF

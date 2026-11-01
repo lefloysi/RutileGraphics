@@ -8,18 +8,18 @@ struct Point {
 struct Vertex : Position {
 	vec2 uv;
 
-	fn Vertex(Point point) {
+	fn Vertex(var Vertex& this, Point point) {
 		position = vec4(point.position, 1.0, 1.0);
 		uv = point.uv;
-	}
+	};
 };
 
-@stage : vertex
+[[stage : vertex]]
 fn main(Point point) -> Vertex {
 	return Vertex(point);
-}
+};
 
-@stage : fragment
+[[stage : fragment]]
 fn main(Vertex vertex) -> vec4 {
 	return sample(plasma, vertex.uv);
-}
+};

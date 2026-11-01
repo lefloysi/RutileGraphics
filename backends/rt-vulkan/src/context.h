@@ -32,6 +32,9 @@ struct rtvk_context {
 extern struct rtvk_context* current_context;
 
 struct rtvk_context* rtvk_get_current_context(void);
+#if defined(__APPLE__)
+VkResult rtvk_initialize_moltenvk(void);
+#endif
 struct rtvk_context* rtvk_create_context(rtvk_context_flags flags);
 void rtvk_context_init(struct rtvk_context* ctx);
 void rtvk_context_finish(struct rtvk_context* ctx);

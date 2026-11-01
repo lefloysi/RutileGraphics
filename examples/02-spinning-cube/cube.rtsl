@@ -11,22 +11,22 @@ struct Vertex : Position {
 	vec3 color;
 	vec3 normal;
 
-	fn Vertex(Point point) : Position(scene * vec4(point.position, 1.0)) {
+	fn Vertex(var Vertex& this, Point point) : Position(scene * vec4(point.position, 1.0)) {
 		color = point.color;
 		normal = point.normal;
-	}
+	};
 };
 
-@stage : vertex
+[[stage : vertex]]
 fn main(Point point) -> Vertex {
 	return Vertex(point);
-}
+};
 
-@stage : fragment
-fn main(Vertex vertex{.color : smooth, .normal : flat}) -> vec4 {
+[[stage : fragment]]
+fn main([[smooth(color)]] [[flat(normal)]] Vertex vertex) -> vec4 {
 	var f32 light = vertex.normal.x * -0.35 + vertex.normal.y * 0.65 + vertex.normal.z * 0.68;
 	if (light < 0.0) {
 		light = 0.0;
-	}
+	};
 	return vec4(vertex.color * (0.22 + light * 0.78), 1.0);
-}
+};

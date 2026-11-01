@@ -12,6 +12,7 @@
 #include "transpiler/transpiler.h"
 
 #include <string.h>
+#include <stdlib.h>
 #include <vector>
 
 void rtgl_execution_buffer_initialize(struct rtgl_context* ctx, struct rtgl_buffer_storage* storage) {

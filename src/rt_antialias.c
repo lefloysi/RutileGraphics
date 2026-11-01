@@ -1,5 +1,5 @@
 #include "rt_antialias.h"
-#include "rt_antialias_program.inc"
+#include "rt_program_bytes.hpp"
 #include <stdlib.h>
 
 struct rt_antialias_t {
@@ -21,7 +21,7 @@ rt_antialias rtAntialiasCreate(void) {
     const rt_vertex_input input = {&attribute,1,sizeof(f32)*2,RT_VERTEX_RATE_VERTEX};
     const rt_vertex_layout layout = {&input,1};
     aa->program = rtProgramCreate();
-    rtProgramSource(aa->program,"antialias",rt_antialias_program,sizeof(rt_antialias_program));
+    rtProgramSource(aa->program,"antialias",rt_antialias_program.data,rt_antialias_program.size);
     rtProgramSetLayout(aa->program,&layout);
     rtProgramFinalize(aa->program);
     aa->input = rtProgramInputLocation(aa->program,&attribute,1);
