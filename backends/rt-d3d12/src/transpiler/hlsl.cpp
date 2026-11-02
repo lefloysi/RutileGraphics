@@ -419,6 +419,22 @@ private:
 		std::uint32_t texcoord = 0;
 		for (std::size_t index = 0; index < type.members.size(); ++index) {
 			const auto& member = type.members[index];
+			std::optional<rtsl::ir::Builtin> member_builtin;
+			for (const auto& builtin : type.builtin_members) {
+				if (builtin.member_path.size() != 1 || builtin.member_path.front() != index) continue;
+				member_builtin = builtin.builtin;
+				if (builtin.builtin == rtsl::ir::Builtin::builtin_point_size)
+					return fail("type", "D3D12 does not support a shader-defined point size");
+			}
+			const auto* member_ir_type = module.findType(member.type);
+			if (member_builtin == rtsl::ir::Builtin::builtin_clip_distance || member_builtin == rtsl::ir::Builtin::builtin_cull_distance) {
+				const auto* element = member_ir_type ? module.findType(member_ir_type->element_type) : nullptr;
+				if (!member_ir_type || member_ir_type->kind != rtsl::ir::TypeKind::type_array || !member_ir_type->element_count || !element || element->kind != rtsl::ir::TypeKind::type_floating || element->bit_width != 32)
+					return fail("type", "clip and cull distances must be sized arrays of 32-bit floats");
+				out << "  float " << hlslIdentifier(module.strings.get(member.name)) << "[" << member_ir_type->element_count << "] : "
+					<< (member_builtin == rtsl::ir::Builtin::builtin_clip_distance ? "SV_ClipDistance" : "SV_CullDistance") << ";\n";
+				continue;
+			}
 			const std::string member_type = typeName(module, member.type, error);
 			const std::string member_name = hlslIdentifier(module.strings.get(member.name));
 			if (member_type.empty()) return false;

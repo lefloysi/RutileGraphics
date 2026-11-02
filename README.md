@@ -84,23 +84,18 @@ brew install ninja
 The GitHub macOS runner is arm64, so the CI preset uses the `arm64-osx` vcpkg
 triplet.
 
-## Build And Test
+## Build
 
-The top-level build adds the runtime backends, layers, and RTSL project, but
-the runtime targets and RTSL test executables are excluded from the default
-build. After configuring a preset, build the specific target you need:
+The top-level build adds the runtime backends, layers, examples, and RTSL project.
+After configuring a preset, build the specific target you need:
 
 ```bat
 cmake --preset debug
-cmake --build --preset debug --target rtsl-sdk
+cmake --build --preset debug --target rutile
 ```
 
-`rtslc` is added only when CMake can find CLI11. RTSL's test targets are always
-configured, require Catch2, and are excluded from the default build. Build them
-explicitly with `cmake --build --preset debug --target rtsl-sdk-tests rtsl-tests`.
-`ctest --preset debug`
-The source tree does not currently provide a single top-level command that builds
-all runtimes, examples, and tests.
+The RTSL compiler is built with Kiln. Set `RTSLC_EXECUTABLE` when configuring
+CMake to use the resulting compiler for shader artifacts.
 
 ## vcpkg Features
 

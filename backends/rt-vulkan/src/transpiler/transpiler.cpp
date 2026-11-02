@@ -151,6 +151,13 @@ public:
 			}
 		}
 		instruction(17, {1});
+		const bool uses_point_size = std::ranges::any_of(module.types, [](const rtsl::ir::Type& type) {
+			return std::ranges::any_of(type.builtin_members, [](const rtsl::ir::BuiltinMember& member) { return member.builtin == rtsl::ir::Builtin::builtin_point_size; });
+		});
+		if (uses_point_size && (entry.stage == rtsl::ir::Stage::stage_tessellation_control || entry.stage == rtsl::ir::Stage::stage_tessellation_evaluation)) instruction(17, {23});
+		if (uses_point_size && entry.stage == rtsl::ir::Stage::stage_geometry) instruction(17, {24});
+		if (std::ranges::any_of(module.types, [](const auto& type) { return std::ranges::any_of(type.builtin_members, [](const auto& member) { return member.builtin == rtsl::ir::Builtin::builtin_clip_distance; }); })) instruction(17, {32});
+		if (std::ranges::any_of(module.types, [](const auto& type) { return std::ranges::any_of(type.builtin_members, [](const auto& member) { return member.builtin == rtsl::ir::Builtin::builtin_cull_distance; }); })) instruction(17, {33});
 		if (std::ranges::any_of(module.resources, [](const rtsl::ir::Resource& resource) { return resource.kind == rtsl::ir::ResourceKind::resource_storage_texture; })) instruction(17, {50});
 		if (std::ranges::any_of(module.resources, [](const rtsl::ir::Resource& resource) { return resource.kind == rtsl::ir::ResourceKind::resource_storage_texture; })) instruction(17, {55});
 		if (std::ranges::any_of(module.resources, [](const rtsl::ir::Resource& resource) { return resource.kind == rtsl::ir::ResourceKind::resource_storage_texture; })) instruction(17, {56});
@@ -299,6 +306,7 @@ private:
 		case rtsl::ir::TypeKind::type_patch:
 			if (!type->element_type) throw std::runtime_error("RTIR patch or primitive type has no element type");
 			result = typeFor(type->element_type); break;
+		case rtsl::ir::TypeKind::type_array:
 		case rtsl::ir::TypeKind::type_primitive:
 			if (!type->element_type || !type->element_count) throw std::runtime_error("RTIR primitive type has no element type or maximum vertex count");
 			result = typeArray(typeFor(type->element_type), type->element_count); break;
@@ -394,6 +402,9 @@ private:
 		std::string contract;
 		std::uint32_t variable{};
 		bool builtin_position{};
+		bool builtin_point_size{};
+		bool builtin_clip_distance{};
+		bool builtin_cull_distance{};
 		bool omitted{};
 		std::uint32_t input_array_count{};
 	};
@@ -435,8 +446,16 @@ private:
 		InterfaceLeaf leaf{.parameter_index = parameter_index, .path = path, .type = type_id, .name = name_value};
 		if (const rtsl::ir::Type* root = module.findType(root_type)) {
 			for (const rtsl::ir::BuiltinMember& builtin : root->builtin_members) {
-				if (builtin.builtin == rtsl::ir::Builtin::builtin_position && std::ranges::equal(builtin.member_path, path)) {
-					leaf.builtin_position = true;
+				if (std::ranges::equal(builtin.member_path, path)) {
+					leaf.builtin_position = builtin.builtin == rtsl::ir::Builtin::builtin_position;
+					leaf.builtin_point_size = builtin.builtin == rtsl::ir::Builtin::builtin_point_size;
+					leaf.builtin_clip_distance = builtin.builtin == rtsl::ir::Builtin::builtin_clip_distance;
+					leaf.builtin_cull_distance = builtin.builtin == rtsl::ir::Builtin::builtin_cull_distance;
+					if (leaf.builtin_clip_distance || leaf.builtin_cull_distance) {
+						const auto* element = type ? module.findType(type->element_type) : nullptr;
+						if (!type || type->kind != rtsl::ir::TypeKind::type_array || !type->element_count || !element || element->kind != rtsl::ir::TypeKind::type_floating || element->bit_width != 32)
+							throw std::runtime_error("clip and cull distances must be sized arrays of 32-bit floats");
+					}
 					break;
 				}
 			}
@@ -496,12 +515,13 @@ private:
 	void createInterfaceVariables(std::vector<InterfaceLeaf>& leaves, bool output) {
 		std::uint32_t location{};
 		for (InterfaceLeaf& leaf : leaves) {
-			const bool raster_position = leaf.builtin_position &&
+			const bool distance_builtin = leaf.builtin_clip_distance || leaf.builtin_cull_distance;
+			const bool raster_builtin = (leaf.builtin_position || leaf.builtin_point_size || distance_builtin) &&
 				((output && (entry.stage == rtsl::ir::Stage::stage_vertex ||
 					entry.stage == rtsl::ir::Stage::stage_tessellation_evaluation ||
 					entry.stage == rtsl::ir::Stage::stage_geometry)) ||
-				 (!output && entry.stage == rtsl::ir::Stage::stage_geometry));
-			if (!output && entry.stage == rtsl::ir::Stage::stage_fragment && leaf.builtin_position) {
+				 (!output && (entry.stage == rtsl::ir::Stage::stage_geometry || (distance_builtin && entry.stage == rtsl::ir::Stage::stage_fragment))));
+			if (!output && entry.stage == rtsl::ir::Stage::stage_fragment && (leaf.builtin_position || leaf.builtin_point_size)) {
 				leaf.omitted = true;
 				continue;
 			}
@@ -510,8 +530,8 @@ private:
 			const std::uint32_t interface_type = !output && leaf.input_array_count ? typeArray(typeFor(leaf.type), leaf.input_array_count) : typeFor(leaf.type);
 			instruction(59, {pointerType(storage_class, interface_type), leaf.variable, storage_class});
 			name(leaf.variable, std::string(output ? "out_" : "in_") + leaf.name);
-			if (raster_position)
-				instruction(71, {leaf.variable, 11, 0});
+			if (raster_builtin)
+				instruction(71, {leaf.variable, 11, leaf.builtin_point_size ? 1u : leaf.builtin_clip_distance ? 3u : leaf.builtin_cull_distance ? 4u : 0u});
 			else instruction(71, {leaf.variable, 30, location++});
 			if (leaf.contract == "flat") instruction(71, {leaf.variable, 14});
 			interface_ids.push_back(leaf.variable);
