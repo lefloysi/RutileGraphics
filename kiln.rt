@@ -28,6 +28,7 @@ fn build(kiln::Options& options) -> void | kiln::configuration_error | rt::alloc
 		@moltenvk.option("runtime_files", "lib/libMoltenVK.dylib");
 	};
 	var allocator = vcpkg::package("vma");
+	@allocator.option("port", "vulkan-memory-allocator");
 	if (options.os() == "windows") {
 		@allocator.option("headers", "vma/vk_mem_alloc.h");
 		@allocator.option("includes", "include/vma");
