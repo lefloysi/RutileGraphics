@@ -1,17 +1,20 @@
-fn graphics_settings(var kiln::Target& target, kiln::Options& options) {
-	@target.option("standard", "c++latest");
-	if (options.os() == "windows") {
-		@target.option("runtime", "MT");
-		if (options.profile() == "debug") {
-			@target.option("runtime", "MTd");
-		};
-	};
+fn graphics_settings(var kiln::Target& target, kiln::Options& options) -> void | kiln::configuration_error | rt::allocation_error {
+	rt::string compiler = options.value("cxx", "cl");
+	rt::string linker = options.value("linker", "link");
+	cpp::Settings settings = cpp::settings();
+	@settings.compiler(compiler);
+	@settings.standard("c++latest");
+	@target.compilers.add(cpp::compiler, settings);
+	@target.linker(linker);
 };
 
-fn build(kiln::Options& options) {
-	var egl = kiln::add_package("egl-registry");
+fn build(kiln::Options& options) -> void | kiln::configuration_error | rt::allocation_error {
+	kiln::load("cpp", &cpp::load);
+	kiln::load("rtsl", &rtsl::load);
+	kiln::load("vcpkg", &vcpkg::load);
+	var egl = vcpkg::package("egl-registry");
 	@egl.option("headers", "EGL/egl.h");
-	var volk = kiln::add_package("volk");
+	var volk = vcpkg::package("volk");
 	@volk.option("headers", "volk.h");
 	if (options.os() == "windows") {
 		@volk.option("libraries", "volk.lib");
@@ -20,11 +23,11 @@ fn build(kiln::Options& options) {
 		@volk.option("libraries", "libvolk.a");
 	};
 	if (options.os() == "macos") {
-		var moltenvk = kiln::add_package("MoltenVK");
+		var moltenvk = vcpkg::package("MoltenVK");
 		@moltenvk.option("headers", "MoltenVK/mvk_vulkan.h");
 		@moltenvk.option("runtime_files", "lib/libMoltenVK.dylib");
 	};
-	var allocator = kiln::add_package("vma");
+	var allocator = vcpkg::package("vma");
 	if (options.os() == "windows") {
 		@allocator.option("headers", "vma/vk_mem_alloc.h");
 		@allocator.option("includes", "include/vma");
@@ -32,17 +35,16 @@ fn build(kiln::Options& options) {
 	else {
 		@allocator.option("headers", "vk_mem_alloc.h");
 	};
-	kiln::add_subdirectory("RTSL");
+	kiln::add_subdirectory("RTSL", options);
 	var api = kiln::add_target("rutile", kiln::TargetType::static_lib);
 	graphics_settings(@api, options);
 	@api.option("includes", "include;src");
-	@api.depends_on("rtslc");
- @api.sources.add("src/shaders/antialias.rtsl");
- @api.option("rtsl_compiler", "{artifact:rtslc}");
- @api.option("rtsl_module", "antialias");
- @api.option("rtsl_symbol", "rt_antialias_program");
- @api.option("rtsl_header", "rt_program_bytes.hpp");
- @api.option("rtsl_type", "rt_program_bytes");
+	@api.option("public_includes", "include");
+	rtsl::Program antialias = rtsl::program("rt-antialias-shaders");
+	@antialias.sources.add("src/shaders/antialias.rtsl");
+	@antialias.module("antialias");
+	@antialias.symbol("rt_antialias_program");
+	@api.depends_on(antialias);
 	@api.sources.add("src/rutile.c");
 	@api.sources.add("src/rt_ext_swapchain.c");
 	@api.sources.add("src/rt_ext_glfw.c");
